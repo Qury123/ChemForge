@@ -8,7 +8,7 @@
 <p align="center">
   <img alt="AutoCAD 2017–2026" src="https://img.shields.io/badge/AutoCAD-2017--2026-blue?style=flat-square">
   <img alt="Windows 64 位" src="https://img.shields.io/badge/Windows-64--bit-lightgrey?style=flat-square">
-  <img alt="版本 1.0.0" src="https://img.shields.io/badge/version-1.0.0-orange?style=flat-square">
+  <img alt="最新版本" src="https://img.shields.io/github/v/release/Qury123/ChemForge?style=flat-square&label=version&color=orange">
   <img alt="许可 MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square">
 </p>
 
@@ -41,7 +41,7 @@
 
 ### 方式一：安装包（推荐）
 
-从 [Releases 页面](https://github.com/Qury123/ChemForge/releases) 下载 `ChemForge_Setup_v1.0.0.exe`，双击运行。
+从 [最新版本页面](https://github.com/Qury123/ChemForge/releases/latest) 下载 `ChemForge_Setup_vX.Y.Z.exe`，双击运行。
 
 > [!IMPORTANT]
 > 安装程序需要管理员权限，UAC 弹窗里选「是」就可以了。
