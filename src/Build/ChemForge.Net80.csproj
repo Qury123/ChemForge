@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- 没有 XAML / WPF 窗体，但 UseWPF 不能去：功能区图标加载整个建立在 WPF 成像层上
+         （RibbonBuilder 用 System.Windows.Media.Imaging 的 BitmapImage / ImageSource 与
+         System.Windows.Input.ICommand），UseWPF=true 是 SDK 工程拿到 WindowsDesktop
+         框架引用的正规入口。曾有的 WPF 占位骨架（NumberingView/ViewModel）已删除。 -->
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>ChemForge</RootNamespace>
+    <AssemblyName>ChemForge</AssemblyName>
+    <Deterministic>true</Deterministic>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- 每个目标框架必须有独立中间目录：默认都落到 obj\$(Configuration)\，net8.0 与 net48 共用时
+         会互相判定"已是最新"而跳过编译，再把对方留在 obj 里的程序集复制进自己的输出目录
+         （实测：deploy\Bundle\...\net48\ChemForge.dll 曾是 net8.0 程序集，哈希完全相同） -->
+    <IntermediateOutputPath>obj\$(Configuration)\net80\</IntermediateOutputPath>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 图块编号层的相当一部分公共成员没有 XML 文档注释，
+         而本工程开了 GenerateDocumentationFile，会刷出一批 CS1591 / CS1573。
+         这里按项目静默这两条：ChemForge 自有代码仍按注释规范评审。 -->
+    <NoWarn>$(NoWarn);1591;1573</NoWarn>
+  </PropertyGroup>
+  <!-- 必须在 UseWPF 定义之后导入：Shared.projitems 里的 WPF UI 项按 $(UseWPF) 条件包含 -->
+  <Import Project="..\Shared\Shared.projitems" Label="Shared" />
+  <PropertyGroup>
+    <!-- AutoCAD 2025 托管 API 目录（可用 /p:AcadSdkDir=... 覆盖） -->
+    <AcadSdkDir Condition="'$(AcadSdkDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</AcadSdkDir>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <OutputPath>..\..\deploy\Bundle\ChemForge.bundle\Contents\net8.0\</OutputPath>
+    <!-- BLOCKNUMBERING_ACAD：Models\Block\Numbering\BlockItem.cs 里带 ObjectId / Point3d 的成员按该宏编译
+         （自测工程不定义该宏，从而不需要 AutoCAD 程序集） -->
+    <DefineConstants>$(DefineConstants);DEBUG;TRACE;NET80;BLOCKNUMBERING_ACAD</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <OutputPath>..\..\deploy\Bundle\ChemForge.bundle\Contents\net8.0\</OutputPath>
+    <DefineConstants>$(DefineConstants);TRACE;NET80;BLOCKNUMBERING_ACAD</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="AcMgd">
+      <HintPath>$(AcadSdkDir)\acmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AcadSdkDir)\acdbmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcCoreMgd">
+      <HintPath>$(AcadSdkDir)\accoremgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcCui">
+      <HintPath>$(AcadSdkDir)\AcCui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AdWindows">
+      <HintPath>$(AcadSdkDir)\AdWindows.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 批量修改块属性（BLKATTCHANGE）需要写「反向 / 倒置」这两个 DXF 组码 71 的位标志，
+         而托管 API（AutoCAD 2020 与 2025 两代都实测缺失 AttributeReference.IsMirrored /
+         IsUpsideDown / DBText.IsMirrored / IsUpsideDown）没有对应入口，只能经
+         Entity.AcadObject 拿 ActiveX 对象设 Backward / UpsideDown。
+         Interop.Common 提供 AcadAttribute / AcadBlockReference 的接口定义，
+         Interop 提供 ACAD 枚举等类型，两个都要引。 -->
+    <Reference Include="Autodesk.AutoCAD.Interop">
+      <HintPath>$(AcadSdkDir)\Autodesk.AutoCAD.Interop.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Autodesk.AutoCAD.Interop.Common">
+      <HintPath>$(AcadSdkDir)\Autodesk.AutoCAD.Interop.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

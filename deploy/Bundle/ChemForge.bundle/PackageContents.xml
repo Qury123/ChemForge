@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ChemForge Autoloader 清单（AutoCAD 启动时扫描 %APPDATA%\Autodesk\ApplicationPlugins）
+  形态对照官方 Bundle 实测：
+    · Autodesk Save to Web and Mobile.bundle —— 唯一"启动即加载"的官方插件，
+      ComponentEntry 带 LoadOnAutoCADStartup="True"，其 AcCloudAccess.dll 在 CAD 进程里确实被加载；
+      它自己就是用多段 <Components> 按版本区间分流的（一段管 R23.0-R24.3、一段管 R25.0 及以后）。
+    · Autodesk AppManager.bundle —— 只带 LoadOnCommandInvocation="True"，进程里就没有它的 DLL。
+  2026-10-07 教训：注册表 HKCU\...\Applications 表（LOADCTRLS=12）在 CAD 启动时不加载插件，
+  必须靠本清单才能"开 CAD 就有 ChemForge 界面"。
+
+  两个组件段（同一份源码、两套编译目标，AutoCAD 按 SeriesMin/SeriesMax 挑一段加载）：
+    · net48 段 —— .NET Framework 4.6+，覆盖 AutoCAD 2017-2024；
+    · net80 段 —— .NET 8，覆盖 AutoCAD 2025-2026。
+  两段的 <ComponentEntry> 里各自重复一份相同的命令清单，不能只写一处。
+
+  版本号写法：R 前缀形式（R21.0 = AutoCAD 2017，R24.3 = AutoCAD 2024，
+  R25.0 = AutoCAD 2025，R25.1 = AutoCAD 2026）。SeriesMax 也可省略表示"到此为止不封顶"，
+  这里显式写出，便于日后对照。
+-->
+<ApplicationPackage
+    SchemaVersion="1.0"
+    AutodeskProduct="AutoCAD"
+    ProductType="Application"
+    AppVersion="1.0.0"
+    ProductCode="{5BD2D6BE-F63A-4DCD-8AED-DDF732DDE6A2}"
+    UpgradeCode="{B8E607B4-5990-4A8E-8AB4-2BC23CC52C3D}"
+    Name="ChemForge"
+    Description="面向化工、新能源行业的 AutoCAD 辅助设计工具箱"
+    Author="ChemForge Contributors"
+    Helpfile="./Contents/Help/index.html">
+
+    <CompanyDetails
+        Name="ChemForge"
+        Url="https://github.com/Qury123/ChemForge"
+        Email="286913519+Qury123@users.noreply.github.com" />
+
+    <!-- 包级运行时要求：官方 Bundle 都有这一层，缺失时整包可能不参与加载。
+         这里取两个组件段的并集，任何一段命中就加载本包。 -->
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD|AutoCAD*" SeriesMin="R21.0" SeriesMax="R25.1" />
+
+    <!-- ============================================================
+         段一：.NET Framework 组件（AutoCAD 2017-2024）
+         ============================================================
+         工程：src\Build\ChemForge.Net48.csproj。名字里的 "net48" 只是这一支（.NET
+         Framework，与 net8.0 相对）的标签，与目标框架版本无关。
+         目标框架是 v4.6，不是 v4.8：AutoCAD 2017/2018 自带 .NET 4.6、2019/2020 为 4.7、
+         2021-2024 为 4.8，取最低公分母 v4.6 后用户机器上不必补装任何 .NET 运行时
+         （4.6 及以上的 CLR 都能加载它）。编译期由 v4.6 参考程序集挡住 4.7+ 才有的 API。
+         编译参照 src\Build\lib\Acad2015（AutoCAD 2015/2016 托管 API v20.0）——刻意取比
+         支持下限 2017（v21.0）还老一代的头：编得过就说明一行都没用到 2017 之后的接口。
+         Autodesk 的托管程序集都没有强名称，运行时按简单名绑定到 CAD 安装目录里那一份，
+         所以编译期用哪一版都不影响运行。 -->
+    <Components Description="AutoCAD 2017-2024 (.NET Framework 4.6+)">
+        <RuntimeRequirements OS="Win64" Platform="AutoCAD|AutoCAD*" SeriesMin="R21.0" SeriesMax="R24.3" />
+        <ComponentEntry
+            AppName="ChemForge_Net48"
+            Version="1.0.0"
+            ModuleName="./Contents/net48/ChemForge.dll"
+            AppDescription="AutoCAD 2017-2024 (.NET Framework 4.6+)"
+            LoadOnAutoCADStartup="True"
+            LoadOnCommandInvocation="True">
+            <!-- 命令清单：即使启动加载被跳过，执行任一 ChemForge 命令也会把插件按需加载起来 -->
+            <Commands GroupName="CHEMFORGE">
+                <Command Local="CHEMFORGE" Global="CHEMFORGE" Description="ChemForge 主命令（打开功能入口）" />
+                <Command Local="TCOLOR" Global="TCOLOR" Description="批量修改多行文字颜色" />
+                <!-- 批量修改块属性 -->
+                <Command Local="BLKATTCHANGE" Global="BLKATTCHANGE" Description="批量修改块增强属性（内容 / 文字选项 / 特性）" />
+                <Command Local="PIPEBREAK" Global="PIPEBREAK" Description="管线打断" />
+                <Command Local="TAGNO" Global="TAGNO" Description="仪表位号编号（尚未实现，仅提示）" />
+                <!-- 图块编号：BLKNUM 命令层 -->
+                <Command Local="BLKNUM" Global="BLKNUM" Description="属性块批量编号" />
+                <!-- BLKNUMHELP 没有菜单项（用法说明已并入「属性块批量编号」对话框右上角的按钮），
+                     直接敲命令仍可用，且与弹窗共用同一份文案（NumberingHelpText.CommandLineText） -->
+                <Command Local="BLKNUMHELP" Global="BLKNUMHELP" Description="属性块批量编号：用法说明" />
+                <Command Local="BLKNUMINFO" Global="BLKNUMINFO" Description="属性块批量编号：插件自检" />
+            </Commands>
+        </ComponentEntry>
+    </Components>
+
+    <!-- ============================================================
+         段二：.NET 8 组件（AutoCAD 2025-2026）
+         ============================================================
+         编译参照 AutoCAD 2025 的托管程序集（v25.0.0.0）。AutoCAD 2025 起改用 .NET 8，
+         两个组件互不重叠，同一台机器上装多个 CAD 版本时各取所需。 -->
+    <Components Description="AutoCAD 2025-2026 (.NET 8)">
+        <RuntimeRequirements OS="Win64" Platform="AutoCAD|AutoCAD*" SeriesMin="R25.0" SeriesMax="R25.1" />
+        <ComponentEntry
+            AppName="ChemForge_Net80"
+            Version="1.0.0"
+            ModuleName="./Contents/net8.0/ChemForge.dll"
+            AppDescription="AutoCAD 2025-2026 (.NET 8)"
+            LoadOnAutoCADStartup="True"
+            LoadOnCommandInvocation="True">
+            <!-- 命令清单：即使启动加载被跳过，执行任一 ChemForge 命令也会把插件按需加载起来 -->
+            <Commands GroupName="CHEMFORGE">
+                <Command Local="CHEMFORGE" Global="CHEMFORGE" Description="ChemForge 主命令（打开功能入口）" />
+                <Command Local="TCOLOR" Global="TCOLOR" Description="批量修改多行文字颜色" />
+                <!-- 批量修改块属性 -->
+                <Command Local="BLKATTCHANGE" Global="BLKATTCHANGE" Description="批量修改块增强属性（内容 / 文字选项 / 特性）" />
+                <Command Local="PIPEBREAK" Global="PIPEBREAK" Description="管线打断" />
+                <Command Local="TAGNO" Global="TAGNO" Description="仪表位号编号（尚未实现，仅提示）" />
+                <!-- 图块编号：BLKNUM 命令层 -->
+                <Command Local="BLKNUM" Global="BLKNUM" Description="属性块批量编号" />
+                <!-- BLKNUMHELP 没有菜单项（用法说明已并入「属性块批量编号」对话框右上角的按钮），
+                     直接敲命令仍可用，且与弹窗共用同一份文案（NumberingHelpText.CommandLineText） -->
+                <Command Local="BLKNUMHELP" Global="BLKNUMHELP" Description="属性块批量编号：用法说明" />
+                <Command Local="BLKNUMINFO" Global="BLKNUMINFO" Description="属性块批量编号：插件自检" />
+            </Commands>
+        </ComponentEntry>
+    </Components>
+</ApplicationPackage>

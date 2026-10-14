@@ -1,0 +1,72 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# NuGet
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# Test results（后 5 条对齐 microsoft/vscode 的 .gitignore：
+# 只挡住连写的 TestResults* 目录是不够的，test-results/ 带横杠、*.trx、
+# coverage/、*.snap.actual 这些同样属于测试产物，一律不入库）
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+test-results/
+test-output.json
+coverage/
+*.snap.actual
+
+# AutoCAD
+*.dwl
+*.dwl2
+*.sv$
+*.ac$
+
+# Deploy outputs
+deploy/Installer/Output/*.exe
+deploy/Bundle/ChemForge.bundle/Contents/net*/
+
+# 本机临时/校验用副本：只为本地验证而生成，不属于仓库内容，不入库
+deploy/Installer/_*.iss
+
+# 运行时文件（CUIx / MNR / 日志由 AutoCAD 与插件在运行时生成，
+# 每次运行都会变，属于产物而非源码，一律不入库）
+runtime/
+
+# AutoCAD 2020 API 参考程序集（Autodesk 版权程序集，不入库）
+src/Build/lib/
+
+# 顶层 tests/：只在本机使用的自测工程，不进公开仓库。
+# 前导斜杠把规则锚定在仓库根目录，避免误伤源码树里的同名目录。
+/tests/
+
+# port/：本地工作区，只在本机保留，不进公开仓库。
+/port/
+
+# Misc
+*.tmp
+*.temp
+TEMP/
+.DS_Store
+Thumbs.db

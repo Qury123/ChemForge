@@ -1,0 +1,33 @@
+# 统一换行符处理
+* text=auto
+
+# 源代码强制 LF
+*.cs text
+*.csproj text
+*.shproj text
+*.projitems text
+*.sln text eol=crlf
+*.xaml text
+*.xml text
+*.md text
+*.json text
+*.resx text
+
+# 图块编号：按 ChemForge 的层目录组织，沿用 LF
+src/Shared/Commands/Block/Numbering/** text eol=lf
+src/Shared/Core/Block/Numbering/** text eol=lf
+src/Shared/Models/Block/Numbering/** text eol=lf
+src/Shared/UI/Forms/Block/Numbering/** text eol=lf
+
+# Windows 专属文件
+*.bat text eol=crlf
+*.iss text eol=crlf
+
+# 二进制文件
+*.dll binary
+*.exe binary
+*.ico binary
+*.cuix binary
+*.dwg binary
+*.png binary
+*.jpg binary

@@ -1,0 +1,52 @@
+此文件为 AutoCAD CUIx 菜单定义文件（压缩/二进制格式）的说明，不是菜单文件本身。
+
+ChemForge.cuix 的生成与挂载：
+
+1. 生成：插件每次启动时由 MenuServiceNet80.CreateMenuFile 依据 MenuDefinition
+   （src/Shared/Application/MenuDefinition.cs）自动生成到 **AutoCAD 用户支持目录**
+   （...\R25.0\chs\Support\ChemForge.cuix，与 acetmain.cuix 等局部菜单同路径），
+   文件缺失或早于插件程序集时重新生成。仓库内 deploy\Dev\ChemForge.cuix 是引导副本
+   （首次挂载前供安装脚本复制）。它是菜单项标签与命令的**单一来源**。
+
+2. 挂载：deploy\Dev\Mount-ChemForgeMenu.ps1（由同目录 Register-ChemForgeMenu.ps1 调用；
+   安装包内二者位于 {app}\Tools\）
+   实测（AutoCAD 2025 Plant 3D）：经典菜单栏真正能稳定画出的形态只有一种——
+   把菜单**扁平**定义在**出厂主定制文件 PnP.cuix 的 PopMenuRoot（PNP 组）**里，
+   并同时满足三条：
+     a) 各工作空间定义加 `<WSPop MenuGroup="PNP" pUID="ID_CFPNP_ROOT">`
+        —— `MenuGroup` 必须是被挂载菜单所在组的**真实组名 PNP**（写 ACAD/CHEMFORGE 不生效）；
+     b) 配置文件布局 `HKCU\...\Profiles\<配置>\Menus` 写 `Pop<n> = PNP pop<n>`，
+        且槽号落在 `Pop1..PopN` **连续块**内（缺号会让其后条目全部被忽略）；
+     c) `MENUBAR=1`（插件启动/换图/空闲探测时强制置 1；该变量随图纸保存、默认 0）。
+   挂载脚本会自动：从 ChemForge.cuix 收割菜单项与宏（宏改名为 `ID_CF_*`）、
+   选一个 PNP 组里空闲的别名 `POPn`、写扁平菜单 + 宏、写工作空间 WSPop 与布局条目，
+   并清理历史遗留的 `MenuGroup="CHEMFORGE"` WSPop 与 `^CHEMFORGE` 连续块布局条目。
+
+   已废弃路线（实测不可靠，勿再用）：
+     * 独立 CHEMFORGE 组 + `Pop<n> = CHEMFORGE ...` 布局条目 —— AutoCAD 恢复菜单栏时
+       报"不能加载菜单项: CHEMFORGE:ChemForge"并丢项（COM 里有、界面没有），切换工作空间即消失；
+     * 嵌套子菜单（根菜单 + `<PopMenuRef>`）—— 能加载进 PNP 组但不会被画出来，
+       故菜单改为扁平结构，用分隔线分成五组。
+
+菜单结构（扁平：五个命令项，四条分隔线分成五组）：
+
+ChemForge
+├── 批量修改多行文字颜色        → TCOLOR
+├──────────────（分隔线）
+├── 批量修改块属性              → BLKATTCHANGE
+├──────────────（分隔线）
+├── 属性块批量编号              → BLKNUM
+├──────────────（分隔线）
+├── 管线自动打断（缺口/半圆架桥）→ PIPEBREAK
+├──────────────（分隔线）
+└── 关于 ChemForge（版本信息）  → CHEMFORGE
+
+「统一块名」（RENBLK）与「图块统计」（BLKCNT）尚未实现，
+已从菜单、功能区与命令清单中移除。
+「仪表块自动编号」（TAGNO）业务同样未实现，已从菜单与功能区摘掉；
+命令本身仍登记在 PackageContents.xml 的命令清单里，命令行敲 TAGNO
+会给出「尚未实现，本次未修改图纸」的回执，不会静默无反应。
+
+撤销挂载：Mount-ChemForgeMenu.ps1 -Uninstall（或 Register-ChemForgeMenu.ps1 -Uninstall，
+后者会连带撤销局部菜单注册并可选删除菜单文件）。
+本说明文件可随时删除，不影响任何功能。

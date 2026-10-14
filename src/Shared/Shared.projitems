@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MSBuildAllProjects Condition="'$(MSBuildVersion)' == '' Or '$(MSBuildVersion)' &lt; '16.0'">$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <SharedGUID>C4F4E4C1-8F4C-4C4F-9E4C-4F4E4C1F4C4E</SharedGUID>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <Import_RootNamespace>ChemForge</Import_RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Application\CommandNames.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Application\MenuBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Application\MenuDefinition.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Application\PluginInitializer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Application\RibbonBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)CAD\Impl\MenuService_Net48.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)CAD\Impl\MenuService_Net80.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)CAD\Interfaces\IMenuService.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\ICommand.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Common\CommonCommands.cs" />
+    <!-- 命令层公用件：宿主判断 / 异常上报 / 命令行输出 / 弹窗隔离。
+         原先 TCOLOR、BLKATTCHANGE、BLKNUM、CHEMFORGE 关于各抄了一份，现已收拢到这里。
+         因为含 System.Windows.Forms.Form 参数与 AcWindows 调用，按 $(UseWindowsForms) 条件包含
+         （Net80 与 Net48 两个壳都设 true）。CommonCommands.cs 只在 #if NET80 || NET48 分支里用它。 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Common\CommandHost.cs"
+               Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Instrument\NumberInstCommand.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Pipe\PipeBreakCommand.cs"
+               Condition="$(DefineConstants.Contains('NET48')) Or $(DefineConstants.Contains('NET80'))" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Numbering\NumberingEngine.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Pipe\PipeBreakEngine.cs"
+               Condition="$(DefineConstants.Contains('NET48')) Or $(DefineConstants.Contains('NET80'))" />
+    <!-- PIPEBREAK 的跨图纸记忆（上次宽度 / 上次管线图层）。改前存在 USERR1/USERS1 里，
+         那是「图纸」级变量，会把插件数据写进用户的每一张 DWG；现在落在运行时目录下的
+         PipeBreak.settings。只有 PipeBreakEngine 用它，故与它同条件。 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Pipe\PipeBreakSettings.cs"
+               Condition="$(DefineConstants.Contains('NET48')) Or $(DefineConstants.Contains('NET80'))" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Numbering\NumberingConfig.cs" />
+    <!-- 图块编号（BLKNUM）：按 ChemForge 的层目录组织
+         （命令 → Commands\Block\Numbering；引擎与服务 → Core\Block\Numbering；
+          数据模型 → Models\Block\Numbering；面板 → UI\Forms\Block\Numbering）。
+         这层用 WinForms（NumberingOptionsForm），并按 Models\Block\Numbering\BlockItem.cs
+         的 #if BLOCKNUMBERING_ACAD 需要 AutoCAD 托管程序集，故按 $(UseWindowsForms) 条件包含。
+         UseWindowsForms 与 BLOCKNUMBERING_ACAD 都由壳工程定义，两个壳都设了：
+           · src\Build\ChemForge.Net80.csproj —— net8.0-windows，AutoCAD 2025/2026；
+           · src\Build\ChemForge.Net48.csproj —— v4.8，AutoCAD 2017–2024
+             （另需 System.Xml / System.Xml.Linq 与 Autodesk.AutoCAD.Interop[.Common]）。 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Block\Numbering\BlockNumberingCommands.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Block\Numbering\BlockNumberingDiagnostics.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\AttributeService.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\AttributeWriter.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\BlockSelector.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\ConfigService.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\NumberingService.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\NumberOptions.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\PlanBuilder.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\ReportService.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\SortingService.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\SortPoint.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\Numbering\ToleranceEstimator.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\Numbering\AttributeDefInfo.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\Numbering\BlockItem.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\Numbering\NumberingPlan.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\Numbering\PreviewGroup.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\Numbering\WriteResult.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Block\Numbering\NumberingOptionsForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <!-- 批量修改块属性（BLKATTCHANGE）。
+         与图块编号同款条件：这层用 WinForms 面板，且 BatchAttrChangeWriter 的
+         「反向 / 倒置」必须走 ActiveX（托管 API 两代都没有 IsMirrored / IsUpsideDown），
+         需要 Autodesk.AutoCAD.Interop.Common —— 该程序集没有强名称，运行时按简单名绑定，
+         故 Net48 工程直接引用 lib\Acad2020 里随 AutoCAD 2025 一并复制进来的那一份即可。
+         按 $(UseWindowsForms) 条件包含：Net80 与 Net48 都设 true，两个目标都编。 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Block\BlockAttr\BatchAttrChangeCommand.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\BlockAttr\BatchAttrChangeCollector.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\BlockAttr\BatchAttrChangeEngine.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\BlockAttr\BatchAttrChangeMemoryStore.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\BlockAttr\BatchAttrChangeReport.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\BlockAttr\BatchAttrChangeWriter.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Block\BlockAttr\BlockEffectiveNameResolver.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeContext.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeDropDownItem.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeMemory.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeOptions.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeRangeSource.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeResult.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeScope.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeSelection.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeSessionState.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeTables.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Block\BlockAttr\BatchAttrChangeTargets.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Block\BlockAttr\BatchAttrChangeForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <!-- 关于对话框（命令 CHEMFORGE 的弹窗）：WinForms，只在启用 WinForms 的工程里编译
+         （Net80 与 Net48 都设 UseWindowsForms=true，CommonCommands.cs 里对应分支用
+         #if NET80 || NET48 同步放行） -->
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Common\AboutDialog.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <!-- 「属性块批量编号」用法说明：文案单一来源 + 弹窗 + 挂在对话框右上角的按钮。
+         WinForms，只在启用 WinForms 的工程里编译（与图块编号命令层同样的条件）。
+         注意：只有 NumberingHelpButton 的 Attach() 会被编号面板 NumberingOptionsForm 调用，
+         NumberingHelpText / NumberingHelpForm 只被本侧使用 -->
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Block\Numbering\NumberingHelpText.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Block\Numbering\NumberingHelpForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Block\Numbering\NumberingHelpButton.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <!-- 批量修改多行文字颜色（TCOLOR）：按 ChemForge 的层目录组织
+         （命令 → Commands\Text\TextColor；引擎 → Core\Text\TextColor；
+           数据模型 → Models\Text\TextColor；面板 → UI\Forms\Text\TextColor）。
+         这层直接调 AutoCAD 托管 API（Database / Transaction / MText / Color）
+         并弹 WinForms 面板，故按 $(UseWindowsForms) 条件包含：
+         Net80 与 Net48 都设 true，两个目标都编。 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Text\TextColor\TextColorCommand.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Text\TextColor\TextColorApplier.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Text\TextColor\TextColorCodeStripper.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Text\TextColor\TextColorContent.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Text\TextColor\TextColorEngine.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\AciColorNames.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorMode.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorOptions.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorReport.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorResult.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <!-- 图层锁定判断：批量命令的公共闸门（先查后写，避免一个锁定图层对象把整批事务拖回滚）。
+         被 Core\Block\Numbering\AttributeService、Core\Text\TextColor\TextColorApplier、
+         Core\Block\BlockAttr\BatchAttrChangeWriter 三处共用，故不加 $(UseWindowsForms) 条件 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Core\Common\LayerLockGuard.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Utilities\ConfigManager.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Utilities\ExtensionMethods.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Utilities\Guard.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Utilities\Logger.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)UI\Resources\Icons\*.png" />
+  </ItemGroup>
+</Project>

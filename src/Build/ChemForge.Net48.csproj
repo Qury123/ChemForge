@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- 打开 WinForms 功能块（图块编号 / 批量修改块属性 / 批量修改多行文字颜色）。
+         必须写在下面那行 Import 之前：Shared.projitems 里的 <Compile Condition="'$(UseWindowsForms)' == 'true'"> 
+         虽然要到求值后期才判定，但把开关放在导入点之前最不容易出错。
+         WPF 层不开（UseWPF 保持未定义）：老式 csproj 没有 Page 项支持，那部分只在 net8.0 编。 -->
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+  <Import Project="..\Shared\Shared.projitems" Label="Shared" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{8AB5A5EA-77C8-447F-93F8-EE02FF4E616D}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>ChemForge</RootNamespace>
+    <AssemblyName>ChemForge</AssemblyName>
+    <!-- 目标框架是 v4.6，不是 v4.8：本工程要覆盖 AutoCAD 2017-2024，而各版本自带的
+         .NET Framework 是 2017/2018=4.6、2019/2020=4.7、2021-2024=4.8。把目标定在
+         v4.6 这个最低公分母上，编译期就会挡住一切 4.7+ 才有的 API，用户机器上
+         不需要额外安装任何 .NET 运行时（4.6 及以上的 CLR 都能加载它）。
+         工程名与输出目录里的 "net48" 只是这一支（.NET Framework，与 net8.0 相对）
+         的标签，与目标框架版本无关。 -->
+    <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+    <!-- AutoCAD 2020 的托管程序集（acmgd / acdbmgd / accoremgd）自身标称 .NETFramework v4.7，
+         比本工程的目标 v4.6 高，MSBuild 默认会以 MSB3274 / MSB3275 把它们整个丢掉
+         （表现为几百个"未能找到类型 Database / ObjectId / CommandMethod"）。
+         这里放开这道检查：编译期仍然用 v4.6 的参考程序集，所以 4.7+ 才有的 BCL API
+         照样编不过（这正是我们要的护栏）；而 Autodesk 的程序集在运行时是按简单名
+         绑定到 AutoCAD 自己安装目录里的那一份，与本机引用的是哪个版本无关。 -->
+    <ResolveAssemblyReferenceIgnoreTargetFrameworkAttributeVersionMismatch>true</ResolveAssemblyReferenceIgnoreTargetFrameworkAttributeVersionMismatch>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <!-- 每个目标框架必须有独立中间目录：默认都落到 obj\$(Configuration)\，与 net8.0 共用时
+         会互相判定"已是最新"而跳过编译，再把对方留在 obj 里的程序集复制进自己的输出目录
+         （实测：deploy\Bundle\...\net48\ChemForge.dll 曾是 net8.0 程序集，哈希完全相同） -->
+    <IntermediateOutputPath>obj\$(Configuration)\net48\</IntermediateOutputPath>
+    <!-- 本工程生成 DocumentationFile，同步层那批文件没写全 XML 注释，
+         会刷出一批 CS1591 / CS1573 —— 与 ChemForge.Net80.csproj 保持同样的压制口径。 -->
+    <NoWarn>$(NoWarn);1591;1573</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>..\..\deploy\Bundle\ChemForge.bundle\Contents\net48\</OutputPath>
+    <DefineConstants>DEBUG;TRACE;NET48;BLOCKNUMBERING_ACAD</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <DocumentationFile>..\..\deploy\Bundle\ChemForge.bundle\Contents\net48\ChemForge.xml</DocumentationFile>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>..\..\deploy\Bundle\ChemForge.bundle\Contents\net48\</OutputPath>
+    <DefineConstants>TRACE;NET48;BLOCKNUMBERING_ACAD</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <DocumentationFile>..\..\deploy\Bundle\ChemForge.bundle\Contents\net48\ChemForge.xml</DocumentationFile>
+  </PropertyGroup>
+  <PropertyGroup>
+    <!-- 编译期引用 AutoCAD 2015/2016 的托管 API（v20.0）——**刻意用比支持下限更老的那一套**。
+         这一支要覆盖 AutoCAD 2017-2024，而 2017 是 v21.0、2018 是 v22.0、2019/2020 是 v23.x、
+         2021-2024 是 v24.x。拿比 2017 还老一代的 v20.0 头来编，只要编得过，就说明代码里
+         一行都没有用到 2017 之后才有的接口 —— 覆盖 2017 是带余量的，而不是踩着线。
+         （实测：换成更老的 v19.0 头同样 0 错误，所以 API 面比 2015 还要低。）
+         Autodesk 的托管 API 向后兼容：拿老版本的头编出来的程序集在新版本上照跑；
+         反过来拿新头编，老版本上就可能 MissingMethodException。
+         运行时并不加载 lib 下的这几个文件：Autodesk 的程序集没有强名称，按简单名绑定到
+         AutoCAD 自己安装目录里的那一份（见下面 Reference 的 Private=false）。
+         需要更高版本时用 /p:AcadApiLib=<目录> 覆盖即可。 -->
+    <AcadApiLib Condition="'$(AcadApiLib)' == ''">lib\Acad2015</AcadApiLib>
+  </PropertyGroup>
+  <PropertyGroup>
+    <!-- .NET Framework 4.6 参考程序集：优先用已安装的开发人员工具包；本机没装目标包时
+         回退到 NuGet 缓存里的 Microsoft.NETFramework.ReferenceAssemblies.net46，
+         否则 dotnet build 会直接报 MSB3644（找不到 v4.6 的引用程序集）。
+         需要时把 Microsoft.NETFramework.ReferenceAssemblies.net46（1.0.3）解包到该路径下即可，
+         包地址：https://api.nuget.org/v3-flatcontainer/microsoft.netframework.referenceassemblies.net46/1.0.3/microsoft.netframework.referenceassemblies.net46.1.0.3.nupkg -->
+    <_CfNet46ReferenceAssemblies>$(UserProfile)\.nuget\packages\microsoft.netframework.referenceassemblies.net46\1.0.3\build\.NETFramework\v4.6</_CfNet46ReferenceAssemblies>
+    <FrameworkPathOverride Condition="'$(FrameworkPathOverride)' == '' And Exists('$(_CfNet46ReferenceAssemblies)\mscorlib.dll')">$(_CfNet46ReferenceAssemblies)</FrameworkPathOverride>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="AcMgd">
+      <HintPath>$(AcadApiLib)\acmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AcadApiLib)\acdbmgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcCoreMgd">
+      <HintPath>$(AcadApiLib)\accoremgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 批量修改块属性要用 ActiveX 补写 Backward / UpsideDown：
+         Entity.AcadObject 拿 ActiveX 对象，Interop.Common 提供 AcadAttribute 的接口定义，
+         两个都要引。Autodesk 的托管程序集都没有强名称，运行时按简单名绑定 ——
+         实际加载的是 AutoCAD 自己安装目录里的那一份，编译期版本号不影响运行。
+         Private=false：不往输出目录复制，省得把 Autodesk 的文件带进 bundle。 -->
+    <Reference Include="Autodesk.AutoCAD.Interop">
+      <HintPath>$(AcadApiLib)\Autodesk.AutoCAD.Interop.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Autodesk.AutoCAD.Interop.Common">
+      <HintPath>$(AcadApiLib)\Autodesk.AutoCAD.Interop.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

@@ -1,0 +1,146 @@
+#if NET48 || NET80
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using ChemForge.Utilities;
+
+namespace ChemForge.Core.Pipe
+{
+    /// <summary>
+    /// PIPEBREAK 的跨图纸记忆：上次的缺口/架桥总宽度、上次点选过的管线图层。
+    ///
+    /// 历史做法是把这两项塞进 AutoCAD 系统变量 USERR1 / USERS1。问题在于这两个变量属于
+    /// <b>图纸</b>而不属于用户：值随 DWG 一起保存，换一张图记忆就变了；而且为了记住插件
+    /// 自己的一个输入，往用户的每一张图纸里都写进了自定义数据——图纸被 DXF 交换、被同事
+    /// 打开时一并带走，用户既不知情也无从清理。
+    ///
+    /// 改为写插件自己的配置文件，落在 ConfigManager 指向的运行时目录（开发期是仓库的
+    /// runtime\，安装后是 %LocalAppData%\ChemForge）。读失败一律回退到调用方给的默认值、
+    /// 写失败只记日志：设置丢了不能影响命令本身能不能跑。
+    /// </summary>
+    internal static class PipeBreakSettings
+    {
+        private const string FileName = "PipeBreak.settings";
+        private const string WidthKey = "LastWidth";
+        private const string LayerKey = "LastPipeLayer";
+
+        /// <summary>读取上次的总宽度；没存过或读不出来时返回 <paramref name="fallback"/>。</summary>
+        public static double GetLastWidth(double fallback)
+        {
+            string raw;
+            if (!Load().TryGetValue(WidthKey, out raw))
+            {
+                return fallback;
+            }
+
+            double value;
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            {
+                return fallback;
+            }
+
+            // 沿用改前的判定：0 或负数视为「没记过」，退回默认值。
+            return Math.Abs(value) > 1e-9 ? value : fallback;
+        }
+
+        public static void SetLastWidth(double value)
+        {
+            Save(WidthKey, value.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>读取上次的管线图层名；没存过时返回 null（调用方据此改为提示用户点选）。</summary>
+        public static string GetLastLayer()
+        {
+            string raw;
+            if (!Load().TryGetValue(LayerKey, out raw))
+            {
+                return null;
+            }
+
+            return string.IsNullOrEmpty(raw) ? null : raw;
+        }
+
+        public static void SetLastLayer(string layerName)
+        {
+            if (string.IsNullOrEmpty(layerName))
+            {
+                return;
+            }
+
+            Save(LayerKey, layerName);
+        }
+
+        /// <summary>
+        /// 解析「键=值」文本。文件不存在、被占用、内容损坏等任何异常都退化成空表，
+        /// 让调用方走默认值。
+        /// </summary>
+        private static Dictionary<string, string> Load()
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                string path = ConfigManager.GetConfigFilePath(FileName);
+                if (!File.Exists(path))
+                {
+                    return map;
+                }
+
+                foreach (string line in File.ReadAllLines(path))
+                {
+                    string text = line.Trim();
+                    if (text.Length == 0 || text[0] == '#')
+                    {
+                        continue;
+                    }
+
+                    // 只按第一个 '=' 切分：图层名里允许出现 '='。
+                    int split = text.IndexOf('=');
+                    if (split <= 0)
+                    {
+                        continue;
+                    }
+
+                    map[text.Substring(0, split).Trim()] = text.Substring(split + 1).Trim();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Info("读取 PIPEBREAK 记忆设置失败，本次改用默认值：" + ex.Message);
+            }
+
+            return map;
+        }
+
+        /// <summary>写入一项并保留文件里其它项（两个设置共用一个文件）。</summary>
+        private static void Save(string key, string value)
+        {
+            try
+            {
+                var map = Load();
+                map[key] = value;
+
+                string path = ConfigManager.GetConfigFilePath(FileName);
+                string directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                var lines = new List<string> { "# ChemForge PIPEBREAK 命令的跨图纸记忆，可安全删除。" };
+                foreach (KeyValuePair<string, string> pair in map)
+                {
+                    lines.Add(pair.Key + "=" + pair.Value);
+                }
+
+                File.WriteAllLines(path, lines.ToArray());
+            }
+            catch (Exception ex)
+            {
+                Logger.Info("保存 PIPEBREAK 记忆设置失败，本次不记忆：" + ex.Message);
+            }
+        }
+    }
+}
+#endif
