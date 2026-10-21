@@ -104,16 +104,17 @@ namespace ChemForge.CAD.Impl
             var targetPath = Path.Combine(supportDir, "ChemForge.cuix");
             try
             {
-                // 菜单文件缺失或早于插件程序集时重新生成（下次启动生效）；
-                // 注册信息（PartialMenuFile / 工作空间 WSPop）由部署脚本维护，这里不触碰
-                if (!File.Exists(targetPath) || IsOlderThanPlugin(targetPath))
+                // 菜单文件缺失、或内容与当前 MenuDefinition 不一致时重新生成（下次启动生效）；
+                // 注册信息（PartialMenuFile / 工作空间 WSPop）由部署脚本维护，这里不触碰。
+                // 判据是内容而非时间戳 —— 原因见 MenuFileNeedsRebuild 的注释。
+                if (MenuFileNeedsRebuild(targetPath))
                 {
                     CreateMenuFile(targetPath);
                     Logger.Info($"ChemForge CUIx 菜单文件已生成：{targetPath}");
                 }
                 else
                 {
-                    Logger.Info($"ChemForge CUIx 菜单文件已存在：{targetPath}");
+                    Logger.Info($"ChemForge CUIx 菜单文件已存在且与当前菜单定义一致：{targetPath}");
                 }
             }
             catch (System.Exception ex)
@@ -254,19 +255,72 @@ namespace ChemForge.CAD.Impl
         }
 
         /// <summary>
-        /// CUIx 是否早于插件程序集（插件重新构建后需要刷新菜单定义）
+        /// 判断 CUIx 是否需要重建。
+        ///
+        /// 2026-10-16 修正（v1.1.0 加 INSTBREAK 时实际踩到）：这里原来只比时间戳
+        /// （CUIx 早于插件程序集才重建），而部署脚本 Mount-ChemForgeMenu.ps1 用
+        /// ZipFile 'Update' 重写工作空间时会把 CUIx 的 LastWriteTimeUtc 刷到挂载时刻 ——
+        /// 挂载之后 CUIx 恒比 DLL 新，判据恒为"不用重建"，**改了 MenuDefinition 也传不进
+        /// CUIx**：装完新版本，菜单栏与功能区里还是旧菜单项（本次表现为找不到
+        /// "仪表线自动打断"）。改用**内容判据**：CUIx 里 MenuMacro 的 UID 集合必须与
+        /// MenuDefinition 的命令项别名集合完全一致，多一个、少一个、读不出来都重建。
         /// </summary>
-        private static bool IsOlderThanPlugin(string cuixPath)
+        private static bool MenuFileNeedsRebuild(string cuixPath)
         {
+            if (!File.Exists(cuixPath)) return true;
+
             try
             {
-                var pluginTime = File.GetLastWriteTimeUtc(typeof(MenuServiceNet80).Assembly.Location);
-                var cuixTime = File.GetLastWriteTimeUtc(cuixPath);
-                return cuixTime < pluginTime;
+                var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectCommandAliases(MenuDefinition.Menus, expected);
+
+                var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                using (var zip = System.IO.Compression.ZipFile.OpenRead(cuixPath))
+                {
+                    var entry = zip.GetEntry("MenuGroup.cui");
+                    if (entry == null) return true;
+
+                    string xml;
+                    using (var stream = entry.Open())
+                    using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8))
+                    {
+                        xml = reader.ReadToEnd();
+                    }
+
+                    // 只认菜单宏声明（<MenuMacro UID="ID_BreakInstrument">）；
+                    // <Name>/<SmallImage> 等元素上的同名属性不会被误当成菜单项。
+                    const string marker = "<MenuMacro UID=\"";
+                    int at = xml.IndexOf(marker, StringComparison.Ordinal);
+                    while (at >= 0)
+                    {
+                        int start = at + marker.Length;
+                        int end = xml.IndexOf('"', start);
+                        if (end > start) actual.Add(xml.Substring(start, end - start));
+                        at = xml.IndexOf(marker, end > start ? end : start, StringComparison.Ordinal);
+                    }
+                }
+
+                return !actual.SetEquals(expected);
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
-                return false;
+                // 读不出来（文件损坏 / 被占用）就重建：绝不因为读取失败而沿用一份可疑的菜单
+                Logger.Warning($"读取 CUIx 菜单文件失败，将重新生成：{ex.Message}");
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 递归收集 MenuDefinition 里所有命令项的别名（子菜单节点与分隔线不算）。
+        /// </summary>
+        private static void CollectCommandAliases(IEnumerable<MenuItemDefinition> items, HashSet<string> into)
+        {
+            if (items == null) return;
+            foreach (var item in items)
+            {
+                if (item == null) continue;
+                if (item.IsCommand) into.Add(item.Alias);
+                CollectCommandAliases(item.Children, into);
             }
         }
 

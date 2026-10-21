@@ -108,14 +108,19 @@ namespace ChemForge.Tests.Application
         }
 
         [TestMethod]
-        public void ToolsMenu_ContainsOnlyBreakPipeCommand()
+        public void ToolsMenu_ContainsBreakPipeAndBreakInstrumentCommands()
         {
             var items = MenuDefinition.Menus[3].Children;
-            Assert.AreEqual(1, items.Count);
+            Assert.AreEqual(2, items.Count);
 
             Assert.AreEqual("管线自动打断（缺口 / 半圆架桥）", items[0].DisplayTitle);
             // 管线打断命令名即 PIPEBREAK（历史命令名，无别名）
             Assert.AreEqual("PIPEBREAK ", items[0].Macro);
+
+            // 仪表线自动打断：与管线打断同引擎，差别是图层点选两次、固定打断仪表线，
+            // 因此不询问缺口方向。命令名 INSTBREAK = INSTRument + BREAK。
+            Assert.AreEqual("仪表线自动打断（缺口 / 半圆架桥）", items[1].DisplayTitle);
+            Assert.AreEqual("INSTBREAK ", items[1].Macro);
 
             // 仪表块自动编号（TAGNO）2026-10-14 从菜单与功能区摘掉：业务尚未实现
             // （NumberInstCommand 里仍是 TODO，只打印编号、不读不写图纸）。
@@ -165,7 +170,7 @@ namespace ChemForge.Tests.Application
             var commands = new List<MenuItemDefinition>();
             CollectCommands(MenuDefinition.Menus, commands);
 
-            Assert.IsTrue(commands.Count >= 5, "应至少登记 5 个命令项（TANGLE / TWIDTH 取消、RENBLK / BLKCNT 下架、TAGNO 摘掉后为 5 项）。");
+            Assert.IsTrue(commands.Count >= 6, "应至少登记 6 个命令项（TANGLE / TWIDTH 取消、RENBLK / BLKCNT 下架、TAGNO 摘掉、新增 INSTBREAK 后为 6 项）。");
             foreach (var command in commands)
             {
                 Assert.IsTrue(command.Macro.EndsWith(" ", StringComparison.Ordinal),
@@ -186,6 +191,7 @@ namespace ChemForge.Tests.Application
                 { "ID_TextColor", CommandNames.TextColor },
                 { "ID_BatchAttrChange", CommandNames.BatchAttrChange },
                 { "ID_BreakPipe", CommandNames.PipeBreak },
+                { "ID_BreakInstrument", CommandNames.InstrumentBreak },
                 { "ID_BlockNumber", CommandNames.BlockNumber },
                 { "ID_About", CommandNames.ChemForge }
             };

@@ -15,6 +15,11 @@
     <OutputType>Library</OutputType>
     <RootNamespace>ChemForge</RootNamespace>
     <AssemblyName>ChemForge</AssemblyName>
+    <!-- 版本号不在这里写死：唯一真源是仓库根的 VERSION 文件（已入库），
+         由文件末尾的 GenerateVersionInfo 目标在编译前读出来、生成程序集版本特性。
+         老式 csproj 不支持 <Version> / <AssemblyVersion> / <FileVersion> 属性
+         （实测写进 PropertyGroup 后编出来仍是 0.0.0.0），所以只能生成 .cs 再编译。
+         改版本号请用 deploy\Set-Version.ps1。 -->
     <!-- 目标框架是 v4.6，不是 v4.8：本工程要覆盖 AutoCAD 2017-2024，而各版本自带的
          .NET Framework 是 2017/2018=4.6、2019/2020=4.7、2021-2024=4.8。把目标定在
          v4.6 这个最低公分母上，编译期就会挡住一切 4.7+ 才有的 API，用户机器上
@@ -118,4 +123,33 @@
     </Reference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+  <!-- ======================= 版本号：唯一真源 =======================
+       仓库根的 VERSION 文件（已入库）是版本号的唯一真源，这里读它并生成三个程序集
+       版本特性。为什么必须生成而不能直接写：老式（非 SDK）csproj 不会自动生成
+       AssemblyInfo，把 <Version> / <AssemblyVersion> / <FileVersion> 写进 PropertyGroup
+       对它无效 —— 实测编出来的 DLL 仍然报 0.0.0.0。
+       原先手写这些特性的 src\Build\AssemblyInfo.Net48.cs 已删除：留着就会与本目标
+       生成的内容撞车（CS0579「重复的特性」）。
+       生成物落在 obj\$(Configuration)\net48\ 下，不进仓库、不进部署目录。
+       改版本号请用 deploy\Set-Version.ps1，不要手改这个文件。 -->
+  <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <ChemForgeVersionFile>$(MSBuildThisFileDirectory)..\..\VERSION</ChemForgeVersionFile>
+      <ChemForgeVersionInfoFile>$(IntermediateOutputPath)ChemForgeVersionInfo.cs</ChemForgeVersionInfoFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(ChemForgeVersionFile)')" Text="找不到版本号文件：$(ChemForgeVersionFile)（版本号唯一真源，必须入库）" />
+    <PropertyGroup>
+      <ChemForgeVersion>$([System.IO.File]::ReadAllText('$(ChemForgeVersionFile)').Trim())</ChemForgeVersion>
+    </PropertyGroup>
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ChemForgeVersion)', '^\d+\.\d+\.\d+$'))" Text="VERSION 内容必须是 x.y.z 三段数字，实际是 '$(ChemForgeVersion)'" />
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <!-- 整行用 ; 分隔，行内不能出现分号，所以这里用全限定的特性名，
+         不写 using System.Reflection; -->
+    <WriteLinesToFile File="$(ChemForgeVersionInfoFile)" Overwrite="true" WriteOnlyWhenDifferent="true" Lines="// 本文件由 ChemForge.Net48.csproj 的 GenerateVersionInfo 目标自动生成，请勿手改。;[assembly: System.Reflection.AssemblyVersion(&quot;$(ChemForgeVersion).0&quot;)];[assembly: System.Reflection.AssemblyFileVersion(&quot;$(ChemForgeVersion).0&quot;)];[assembly: System.Reflection.AssemblyInformationalVersion(&quot;$(ChemForgeVersion)&quot;)]" />
+    <ItemGroup>
+      <Compile Include="$(ChemForgeVersionInfoFile)" />
+      <FileWrites Include="$(ChemForgeVersionInfoFile)" />
+    </ItemGroup>
+  </Target>
 </Project>

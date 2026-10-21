@@ -22,7 +22,7 @@
     SchemaVersion="1.0"
     AutodeskProduct="AutoCAD"
     ProductType="Application"
-    AppVersion="1.0.0"
+    AppVersion="1.2.0"
     ProductCode="{5BD2D6BE-F63A-4DCD-8AED-DDF732DDE6A2}"
     UpgradeCode="{B8E607B4-5990-4A8E-8AB4-2BC23CC52C3D}"
     Name="ChemForge"
@@ -55,7 +55,7 @@
         <RuntimeRequirements OS="Win64" Platform="AutoCAD|AutoCAD*" SeriesMin="R21.0" SeriesMax="R24.3" />
         <ComponentEntry
             AppName="ChemForge_Net48"
-            Version="1.0.0"
+            Version="1.2.0"
             ModuleName="./Contents/net48/ChemForge.dll"
             AppDescription="AutoCAD 2017-2024 (.NET Framework 4.6+)"
             LoadOnAutoCADStartup="True"
@@ -67,6 +67,7 @@
                 <!-- 批量修改块属性 -->
                 <Command Local="BLKATTCHANGE" Global="BLKATTCHANGE" Description="批量修改块增强属性（内容 / 文字选项 / 特性）" />
                 <Command Local="PIPEBREAK" Global="PIPEBREAK" Description="管线打断" />
+                <Command Local="INSTBREAK" Global="INSTBREAK" Description="仪表线打断（固定打断仪表线）" />
                 <Command Local="TAGNO" Global="TAGNO" Description="仪表位号编号（尚未实现，仅提示）" />
                 <!-- 图块编号：BLKNUM 命令层 -->
                 <Command Local="BLKNUM" Global="BLKNUM" Description="属性块批量编号" />
@@ -87,7 +88,7 @@
         <RuntimeRequirements OS="Win64" Platform="AutoCAD|AutoCAD*" SeriesMin="R25.0" SeriesMax="R25.1" />
         <ComponentEntry
             AppName="ChemForge_Net80"
-            Version="1.0.0"
+            Version="1.2.0"
             ModuleName="./Contents/net8.0/ChemForge.dll"
             AppDescription="AutoCAD 2025-2026 (.NET 8)"
             LoadOnAutoCADStartup="True"
@@ -99,6 +100,7 @@
                 <!-- 批量修改块属性 -->
                 <Command Local="BLKATTCHANGE" Global="BLKATTCHANGE" Description="批量修改块增强属性（内容 / 文字选项 / 特性）" />
                 <Command Local="PIPEBREAK" Global="PIPEBREAK" Description="管线打断" />
+                <Command Local="INSTBREAK" Global="INSTBREAK" Description="仪表线打断（固定打断仪表线）" />
                 <Command Local="TAGNO" Global="TAGNO" Description="仪表位号编号（尚未实现，仅提示）" />
                 <!-- 图块编号：BLKNUM 命令层 -->
                 <Command Local="BLKNUM" Global="BLKNUM" Description="属性块批量编号" />

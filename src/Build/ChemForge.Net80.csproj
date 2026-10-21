@@ -9,6 +9,12 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>ChemForge</RootNamespace>
     <AssemblyName>ChemForge</AssemblyName>
+    <!-- 插件版本号。CHEMFORGE 命令的「关于」对话框读程序集版本（CommonCommands.GetVersionText），
+         所以这里改了它才会跟着变。
+         唯一真源是仓库根的 VERSION 文件（已入库），这里用 MSBuild 属性函数直接读它 ——
+         不再手写常量，也就不会再出现「插件说 1.1.0、安装包说 1.2.0」的分裂。
+         改版本号请用 deploy\Set-Version.ps1，不要手改这个文件。 -->
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\VERSION').Trim())</Version>
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- 每个目标框架必须有独立中间目录：默认都落到 obj\$(Configuration)\，net8.0 与 net48 共用时
@@ -23,6 +29,10 @@
   </PropertyGroup>
   <!-- 必须在 UseWPF 定义之后导入：Shared.projitems 里的 WPF UI 项按 $(UseWPF) 条件包含 -->
   <Import Project="..\Shared\Shared.projitems" Label="Shared" />
+  <!-- 本工程（SDK 工程）的版本号来自上面的 <Version>，SDK 会自动生成 AssemblyInfo 特性。
+       net48 那一支是老式 csproj，没有这个待遇，由 ChemForge.Net48.csproj 的
+       GenerateVersionInfo 目标把同样的特性生成到它自己的 obj\ 中间目录里。
+       那个文件在 obj\ 下，SDK 默认的 glob 本来就会排除 obj\**，不会与本工程撞车。 -->
   <PropertyGroup>
     <!-- AutoCAD 2025 托管 API 目录（可用 /p:AcadSdkDir=... 覆盖） -->
     <AcadSdkDir Condition="'$(AcadSdkDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</AcadSdkDir>

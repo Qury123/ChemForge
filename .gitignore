@@ -64,6 +64,9 @@ src/Build/lib/
 # port/：本地工作区，只在本机保留，不进公开仓库。
 /port/
 
+# deploy/Diag/：本机排障用的一次性脚本（CAD 系统变量采集/修复），不进公开仓库。
+/deploy/Diag/
+
 # Misc
 *.tmp
 *.temp

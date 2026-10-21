@@ -2,6 +2,14 @@ using System;
 using Autodesk.AutoCAD.Runtime;
 using ChemForge.Utilities;
 
+// 显式声明本程序集就是 AutoCAD 的扩展应用（IExtensionApplication）实现。
+// AutoCAD 在程序集里没有任何声明时会自己扫描、找到唯一实现后调用它 ——
+// 但那属于「未声明行为」：程序集里一旦出现第二个实现、或宿主版本的扫描规则不同，
+// 初始化就会被静默跳过，表现为「插件加载了但菜单/日志一概没有」。
+// 2026-10-16 为 AutoCAD 2019-2024（.NET Framework 那一支）补上显式声明，
+// 让 Initialize()/Terminate() 的调用不依赖扫描结果。
+[assembly: ExtensionApplication(typeof(ChemForge.Application.PluginInitializer))]
+
 namespace ChemForge.Application
 {
     /// <summary>

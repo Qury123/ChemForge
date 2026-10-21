@@ -1,6 +1,10 @@
 # 统一换行符处理
 * text=auto
 
+# 版本号唯一真源：内容要跨平台逐字节一致（ISPP 的 FileRead 与 MSBuild 的
+# ReadAllText 都直接读它），所以显式锁 LF。
+VERSION text eol=lf
+
 # 源代码强制 LF
 *.cs text
 *.csproj text

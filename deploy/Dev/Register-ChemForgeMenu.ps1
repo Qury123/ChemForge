@@ -67,6 +67,31 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+# =====================================================================
+#  顶层兜底：任何未捕获的终止性错误都在这里落地
+# =====================================================================
+# ★ 为什么需要它：安装/卸载程序是用 Exec(..., SW_HIDE) 调本脚本的，窗口是隐藏的，
+#   脚本一旦抛异常，用户只能看到一句「菜单注册撤销未完成（退出码 1）」，现场全丢
+#   （2026-10-16 卸载时实测踩到，查了半天才定位）。这里把错误连同**出错位置**写进
+#   %TEMP%\ChemForge-register-error.log，并在 stdout 打印一份，退出码仍为 1。
+$script:ErrorLogPath = Join-Path $env:TEMP 'ChemForge-register-error.log'
+trap {
+    $err = $_
+    $detail = @(
+        '==== ChemForge 菜单注册脚本异常 ===='
+        ('时间：' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+        ('脚本：' + $PSCommandPath)
+        ('参数：' + (($PSBoundParameters.GetEnumerator() | ForEach-Object { '-' + $_.Key + ' ' + $_.Value }) -join ' '))
+        ('错误：' + $err.Exception.Message)
+        ('类型：' + $err.Exception.GetType().FullName)
+        ('位置：' + ($err.InvocationInfo.PositionMessage -replace '\s+', ' '))
+    ) -join [Environment]::NewLine
+    try { Add-Content -LiteralPath $script:ErrorLogPath -Value ($detail + [Environment]::NewLine) -Encoding UTF8 } catch { }
+    Write-Host $detail
+    Write-Output ("诊断已写入：{0}" -f $script:ErrorLogPath)
+    exit 1
+}
+
 if (-not $CuixSource) {
     if (-not $PSScriptRoot) {
         throw '无法定位 ChemForge.cuix：请用 -CuixSource 显式指定路径，或以文件方式运行本脚本（$PSScriptRoot 才可用）。'
@@ -133,8 +158,50 @@ if ($Restore) {
     exit 0
 }
 
-$backupRoot = Join-Path $env:TEMP ("ChemForge-MenuRegister-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+# 备份目录**按需创建**：升级（含同版本重装）时 CUIx 通常一个字都不用改，
+# 那就既不该在 %TEMP% 里堆一个空目录，也不该把每个 CUIx 都重写一遍（2026-10-16 用户要求）。
+$backupRoot = ''
+function Get-BackupRoot {
+    if (-not $script:backupRoot) {
+        $script:backupRoot = Join-Path $env:TEMP ("ChemForge-MenuRegister-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        New-Item -ItemType Directory -Force -Path $script:backupRoot | Out-Null
+    }
+    return $script:backupRoot
+}
+
+# 只读预检：这个 CUIx 到底用不用改？不改就让调用方整个跳过 —— 不建备份、不以 Update 模式打开。
+# ★ 以 Update 模式打开会重写文件、刷新 mtime，**即使一个字节都没变**；升级时这是绝大多数文件的情形。
+# ★ 判据与下面真正的改动逻辑一一对应，改了那边必须同步改这里。
+function Test-CuixNeedsChange([string]$path, [bool]$uninstall, [bool]$isGroupFile) {
+    $zip = $null
+    try { $zip = [System.IO.Compression.ZipFile]::OpenRead($path) }
+    catch { return $true }   # 只读都打不开，交回原路径去处理/报错
+    try {
+        if ($isGroupFile) {
+            $e = $zip.GetEntry('Header.cui')
+            if ($null -ne $e) {
+                $sr = New-Object System.IO.StreamReader($e.Open(), [System.Text.Encoding]::UTF8)
+                $t = $sr.ReadToEnd(); $sr.Close()
+                if ($uninstall) {
+                    if ($t -match 'ChemForge\.cuix') { return $true }
+                }
+                elseif ($t -notmatch 'PartialMenuFile>ChemForge\.cuix') { return $true }
+            }
+        }
+        # WorkspaceRoot.cui：安装路径已不再改写（工作空间 WSPop 交给 Mount-ChemForgeMenu.ps1），
+        # 只有卸载时才需要摘掉历史遗留的 CHEMFORGE WSPop。
+        if ($uninstall) {
+            $e2 = $zip.GetEntry('WorkspaceRoot.cui')
+            if ($null -ne $e2) {
+                $sr2 = New-Object System.IO.StreamReader($e2.Open(), [System.Text.Encoding]::UTF8)
+                $t2 = $sr2.ReadToEnd(); $sr2.Close()
+                if ($t2 -match 'MenuGroup="CHEMFORGE"') { return $true }
+            }
+        }
+        return $false
+    }
+    finally { $zip.Dispose() }
+}
 
 $partialLine   = "        <PartialMenuFile>ChemForge.cuix</PartialMenuFile>"
 # ★ 必须显式 (?i)：AutoCAD 自己写回配置时会把文件名小写成 chemforge.cuix，
@@ -153,18 +220,32 @@ $script:ChemForgeOwnPatterns = @(
 
 function Remove-ChemForgeOwnFiles([string]$dir) {
     $n = 0
+    $failed = @()
     foreach ($f in (Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue)) {
         foreach ($p in $script:ChemForgeOwnPatterns) {
             if ($f.Name -match $p) {
-                Remove-Item -LiteralPath $f.FullName -Force
                 # ★ 必须 Write-Host：调用方是 $x = Remove-ChemForgeOwnFiles $dir，
                 #   函数里的 Write-Output 会一起进管道被当成返回值收走 —— 旧版就是这样
                 #   「文件确实删了，却一个字都没打印」，看起来像没干活。
-                Write-Host ("  已删除 " + $f.Name)
-                $n++
+                # ★ 单个文件删不掉**不能**让整个卸载失败：某个文件被资源管理器/杀软/残留进程
+                #   占着是常事，旧版裸调 Remove-Item 在 $ErrorActionPreference='Stop' 下会直接
+                #   抛异常，整个脚本以退出码 1 收场、卸载器弹「撤销未完成」的假警报
+                #   （2026-10-16 实测踩到）。这里降级为警告，其余文件照常清理。
+                try {
+                    Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+                    Write-Host ("  已删除 " + $f.Name)
+                    $n++
+                }
+                catch {
+                    $failed += $f.Name
+                    Write-Warning ("  未能删除 " + $f.Name + "：" + $_.Exception.Message)
+                }
                 break
             }
         }
+    }
+    if ($failed.Count -gt 0) {
+        Write-Warning ("以下文件未能删除（可能被占用），不影响卸载完成，可稍后手工清理：{0}" -f ($failed -join '、'))
     }
     return $n
 }
@@ -272,9 +353,17 @@ foreach ($dir in $supportDirs) {
     # ---- 逐个 CUIx 处理 Header / Workspace ----
     $files = Get-ChildItem $dir -File | Where-Object { $_.Name -match '\.(cuix|cui)$' -and $_.Name -ne 'PnP.bak.cuix' }
     foreach ($file in $files) {
+        # 宿主（组）文件 = 本目录里被选中的那一份：Plant 3D 是 PnP.cuix，纯 AutoCAD 是 acad.cuix。
+        # 局部菜单登记必须写进宿主文件的 Header.cui —— 写进非宿主文件不会生效（见下面注释）。
+        $isGroupFile = ($file.FullName -eq $target)
+
+        # ★ 先只读预检，不改就整个跳过：不建备份、不以 Update 模式打开（后者会刷新 mtime）。
+        #   升级时「什么都不用改」是常态，这一步把「每次安装都重写一遍全部 CUIx」变成零写入。
+        if (-not (Test-CuixNeedsChange $file.FullName ([bool]$Uninstall) $isGroupFile)) { continue }
+
         # ★ 备份必须在改动**之前**：ZipFile 以 Update 模式打开会独占文件，
         #   改完再 Copy-Item 只会拷到「已经改过」的内容，那份备份毫无用处（旧版就是这个 bug）。
-        $fileBackup = Join-Path $backupRoot $file.Name
+        $fileBackup = Join-Path (Get-BackupRoot) $file.Name
         Copy-Item $file.FullName $fileBackup -Force -ErrorAction SilentlyContinue
 
         $zip = $null
@@ -283,10 +372,12 @@ foreach ($dir in $supportDirs) {
 
         $headerChanged = $false
         $wsChanged = $false
-        # 局部菜单注册放进 **PnP 组文件**（Express/acetmain.cuix 同链，实测菜单组随启动加载）；
-        # 不可放进主 acad.CUIX（实测那样 CHEMFORGE 组不会加载）。
+        # 局部菜单注册放进**宿主（组）文件**：Plant 3D 是 PnP.cuix（Express/acetmain.cuix 同链，
+        # 实测菜单组随启动加载）；纯 AutoCAD 是 acad.cuix —— 它的 Header.cui 里本来就用同样
+        # 的 <PartialMenuFile> 机制加载 custom.cuix / appmanager.cuix，机制一致。
+        # （2026-10-14 的「放进 acad.CUIX 不生效」是在 Plant 3D 上试的：那里的宿主是 PnP.cuix，
+        #   写进 acad.CUIX 自然不会生效 —— 判据是「是不是宿主」，不是文件名。）
         # ChemForge.cuix 等局部菜单文件不得出现在其它 cuix 的 Header 里（防重复加载/自引用）
-        $isGroupFile = $file.Name -match '^PnP\.cuix$'
         try {
             # --- Header.cui：PartialMenuFile 注册（仅 PnP.cuix 组文件）---
             $hBytes = $null
@@ -373,11 +464,13 @@ foreach ($dir in $supportDirs) {
 
 Write-Output ('')
 if ($Uninstall) {
-    Write-Output ("已撤销 ChemForge 菜单注册（改动了 {0} 个文件），备份目录：{1}" -f $touchedFiles, $backupRoot)
+    Write-Output ("已撤销 ChemForge 菜单注册（改动了 {0} 个文件）" -f $touchedFiles)
 }
 else {
-    Write-Output ("已完成 ChemForge 菜单注册（改动了 {0} 个文件），备份目录：{1}" -f $touchedFiles, $backupRoot)
+    Write-Output ("已完成 ChemForge 菜单注册（改动了 {0} 个文件）" -f $touchedFiles)
 }
+if ($backupRoot) { Write-Output ("备份目录：{0}" -f $backupRoot) }
+else { Write-Output '本次没有任何 CUIx 需要改动，未创建备份目录。' }
 
 # ---- 挂载到出厂 PNP 组（唯一能被经典菜单栏稳定画出的形态）----
 # 详见 Mount-ChemForgeMenu.ps1 顶部说明：扁平弹出菜单写进出厂 PnP.cuix（PNP 组）、
@@ -430,9 +523,25 @@ if ($Uninstall -and $RemoveFile) {
 
     $prog = Join-Path $env:LOCALAPPDATA 'Programs\ChemForge'
     if (Test-Path $prog) {
-        $quarantine = Join-Path $env:TEMP ("ChemForge-Uninstall-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-        New-Item -ItemType Directory -Force -Path $quarantine | Out-Null
-        Move-Item -LiteralPath $prog -Destination (Join-Path $quarantine 'Programs-ChemForge') -Force
-        Write-Output ("已移除已安装的程序目录（移入隔离区，可逆）：{0} -> {1}" -f $prog, $quarantine)
+        # ★ 本脚本正从 $prog\Tools\ 里跑（Inno 卸载器调用的就是安装目录里的那一份），
+        #   而卸载器自己的 unins000.exe / _unins.tmp 也正在 $prog 里运行 ——
+        #   此时 Move-Item 整个目录必然失败（运行中的可执行文件被映射，目录不可改名），
+        #   脚本于是以退出码 1 收场，卸载器弹「菜单注册撤销未完成」的**假警报**
+        #   （2026-10-16 实测踩到）。目录的删除本来就由卸载器负责，这里直接跳过。
+        $runningFromProg = $PSScriptRoot -and $PSScriptRoot.StartsWith($prog, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($runningFromProg) {
+            Write-Output ("程序目录由卸载程序负责删除，本脚本跳过隔离搬运：{0}" -f $prog)
+        }
+        else {
+            try {
+                $quarantine = Join-Path $env:TEMP ("ChemForge-Uninstall-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+                New-Item -ItemType Directory -Force -Path $quarantine | Out-Null
+                Move-Item -LiteralPath $prog -Destination (Join-Path $quarantine 'Programs-ChemForge') -Force
+                Write-Output ("已移除已安装的程序目录（移入隔离区，可逆）：{0} -> {1}" -f $prog, $quarantine)
+            }
+            catch {
+                Write-Warning ("程序目录未能移入隔离区（{0}）：{1}" -f $prog, $_.Exception.Message)
+            }
+        }
     }
 }
