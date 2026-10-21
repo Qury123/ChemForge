@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using ChemForge.Models.Block.BlockAttr;
+using static ChemForge.UI.Forms.Common.DialogStyle;
 
 namespace ChemForge.UI.Forms.Block.BlockAttr
 {
@@ -185,7 +186,7 @@ namespace ChemForge.UI.Forms.Block.BlockAttr
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(940, 740);
             MinimumSize = new Size(780, 700);
-            Padding = new Padding(8);
+            Padding = new Padding(FormPadding);
 
             TableLayoutPanel root = new TableLayoutPanel
             {
@@ -244,11 +245,11 @@ namespace ChemForge.UI.Forms.Block.BlockAttr
             {
                 Text = "勾选要修改的属性标签（可多选）：",
                 AutoSize = true,
-                ForeColor = Color.FromArgb(0, 90, 160),
+                ForeColor = Accent,
                 Margin = new Padding(0, 2, 0, 4)
             }, 0, 0);
 
-            _txtBlockInfo = NewReadOnlyText(Color.FromArgb(0, 90, 160));
+            _txtBlockInfo = NewReadOnlyText(Accent);
             _txtBlockInfo.Dock = DockStyle.Fill;
             layout.Controls.Add(_txtBlockInfo, 0, 1);
 
@@ -320,7 +321,7 @@ namespace ChemForge.UI.Forms.Block.BlockAttr
             _lblRangeInfo = new Label
             {
                 AutoSize = true,
-                ForeColor = Color.FromArgb(0, 90, 160),
+                ForeColor = Accent,
                 Margin = new Padding(14, 8, 0, 0)
             };
 
@@ -1069,21 +1070,21 @@ namespace ChemForge.UI.Forms.Block.BlockAttr
             }
             else if (_context.RangeSource == BatchAttrChangeRangeSource.WholeDrawing)
             {
-                _lblRangeInfo.ForeColor = Color.FromArgb(0, 90, 160);
+                _lblRangeInfo.ForeColor = Accent;
                 _lblRangeInfo.Text = "全图所有同名图块，共 "
                     + _context.SameNameBlockCount.ToString(CultureInfo.InvariantCulture)
                     + " 个（②里不选任何对象直接回车的结果）";
             }
             else if (_context.RangeSource == BatchAttrChangeRangeSource.PickedRange)
             {
-                _lblRangeInfo.ForeColor = Color.FromArgb(0, 90, 160);
+                _lblRangeInfo.ForeColor = Accent;
                 _lblRangeInfo.Text = "本次框选的 "
                     + _context.SelectedBlockCount.ToString(CultureInfo.InvariantCulture)
                     + " 个图块（与①同名）";
             }
             else
             {
-                _lblRangeInfo.ForeColor = Color.FromArgb(0, 90, 160);
+                _lblRangeInfo.ForeColor = Accent;
                 _lblRangeInfo.Text = "① 选中的 "
                     + _context.SelectedBlockCount.ToString(CultureInfo.InvariantCulture)
                     + " 个图块";
@@ -1321,18 +1322,6 @@ namespace ChemForge.UI.Forms.Block.BlockAttr
                 : new IntPtr(SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32()));
         }
 
-        private static GroupBox NewGroup(string text, int height)
-        {
-            return new GroupBox
-            {
-                Text = text,
-                Dock = DockStyle.Fill,
-                Height = height,
-                Margin = new Padding(0, 0, 0, 6),
-                Padding = new Padding(8, 2, 8, 4)
-            };
-        }
-
         private static FlowLayoutPanel NewFlow()
         {
             return new FlowLayoutPanel
@@ -1414,17 +1403,6 @@ namespace ChemForge.UI.Forms.Block.BlockAttr
                 AutoSize = true,
                 Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
                 Margin = new Padding(0, 4, 16, 0)
-            };
-        }
-
-        private static Button NewButton(string text, int width)
-        {
-            return new Button
-            {
-                Text = text,
-                Width = width,
-                Height = 28,
-                Margin = new Padding(6, 0, 0, 0)
             };
         }
 

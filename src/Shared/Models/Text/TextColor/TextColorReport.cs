@@ -18,35 +18,7 @@ namespace ChemForge.Models.Text.TextColor
         /// <summary>完整报告：命令行输出用，含样例、核对信息与刷新提示。</summary>
         public static string Build(TextColorResult result, TextColorOptions options)
         {
-            if (result == null)
-            {
-                return string.Empty;
-            }
-
-            StringBuilder builder = new StringBuilder();
-
-            AppendHeadline(builder, result);
-            AppendTarget(builder, result, options);
-            AppendSkipNotes(builder, result);
-
-            AppendSample(builder, "[样例·清理前] ", result.BeforeSample);
-            AppendSample(builder, "[样例·清理后] ", result.AfterSample);
-            AppendSample(builder, "[核对] ", result.ColorProbe);
-
-            if (result.Messages != null)
-            {
-                foreach (string message in result.Messages)
-                {
-                    if (!string.IsNullOrEmpty(message))
-                    {
-                        builder.Append(Environment.NewLine).Append(message);
-                    }
-                }
-            }
-
-            AppendUndoNote(builder);
-
-            return builder.ToString();
+            return BuildCore(result, options, true);
         }
 
         /// <summary>
@@ -56,6 +28,18 @@ namespace ChemForge.Models.Text.TextColor
         /// 那些是留在命令行里查问题用的，摆进窗口只会把“到底改了几个”淹掉。
         /// </summary>
         public static string BuildBrief(TextColorResult result, TextColorOptions options)
+        {
+            return BuildCore(result, options, false);
+        }
+
+        /// <summary>
+        /// 两种口径的共同部分：结论 → 目标 → 跳过统计 → 撤销提示，顺序固定；
+        /// 完整报告只是在中间多插样例、逐条消息与核对信息。
+        ///
+        /// 合在一起写而不是各写一遍：两边的开头三行必须逐字一致（测试也是这么断言的），
+        /// 各写一遍就等于给“以后改了一边忘了另一边”留了个口子。
+        /// </summary>
+        private static string BuildCore(TextColorResult result, TextColorOptions options, bool detailed)
         {
             if (result == null)
             {
@@ -67,6 +51,25 @@ namespace ChemForge.Models.Text.TextColor
             AppendHeadline(builder, result);
             AppendTarget(builder, result, options);
             AppendSkipNotes(builder, result);
+
+            if (detailed)
+            {
+                AppendSample(builder, "[样例·清理前] ", result.BeforeSample);
+                AppendSample(builder, "[样例·清理后] ", result.AfterSample);
+                AppendSample(builder, "[核对] ", result.ColorProbe);
+
+                if (result.Messages != null)
+                {
+                    foreach (string message in result.Messages)
+                    {
+                        if (!string.IsNullOrEmpty(message))
+                        {
+                            AppendLine(builder, message);
+                        }
+                    }
+                }
+            }
+
             AppendUndoNote(builder);
 
             return builder.ToString();
@@ -92,21 +95,19 @@ namespace ChemForge.Models.Text.TextColor
                 return;
             }
 
-            builder.Append(Environment.NewLine)
-                .Append("目标颜色：")
-                .Append(options.Describe());
+            AppendLine(builder, "目标颜色：" + options.Describe());
 
-            builder.Append(Environment.NewLine)
-                .Append("范围：所选对象");
-
+            string range = "范围：所选对象";
             if (options.IncludeBlockDefinitions)
             {
-                builder.Append(" + 块定义内部（扫描 ")
-                    .Append(Number(result.ScannedBlockCount))
-                    .Append(" 个块定义，其中 ")
-                    .Append(Number(result.ProcessedBlockCount))
-                    .Append(" 个被改动）");
+                range += " + 块定义内部（扫描 "
+                    + Number(result.ScannedBlockCount)
+                    + " 个块定义，其中 "
+                    + Number(result.ProcessedBlockCount)
+                    + " 个被改动）";
             }
+
+            AppendLine(builder, range);
         }
 
         /// <summary>被跳过的三类统计，有才写。</summary>
@@ -114,33 +115,32 @@ namespace ChemForge.Models.Text.TextColor
         {
             if (result.FieldSkippedCount > 0)
             {
-                builder.Append(Environment.NewLine)
-                    .Append("另有 ")
-                    .Append(Number(result.FieldSkippedCount))
-                    .Append(" 个含字段的文字已跳过内容清理（仅改了对象颜色）。");
+                AppendLine(
+                    builder,
+                    "另有 " + Number(result.FieldSkippedCount)
+                    + " 个含字段的文字已跳过内容清理（仅改了对象颜色）。");
             }
 
             if (result.LockedSkippedCount > 0)
             {
-                builder.Append(Environment.NewLine)
-                    .Append("另有 ")
-                    .Append(Number(result.LockedSkippedCount))
-                    .Append(" 个文字位于锁定图层，已整体跳过（锁定图层上无法修改对象，连对象颜色也写不进去）。");
+                AppendLine(
+                    builder,
+                    "另有 " + Number(result.LockedSkippedCount)
+                    + " 个文字位于锁定图层，已整体跳过（锁定图层上无法修改对象，连对象颜色也写不进去）。");
             }
 
             if (result.FailedCount > 0)
             {
-                builder.Append(Environment.NewLine)
-                    .Append("有 ")
-                    .Append(Number(result.FailedCount))
-                    .Append(" 个对象的内容读取失败，已只改对象颜色。");
+                AppendLine(
+                    builder,
+                    "有 " + Number(result.FailedCount)
+                    + " 个对象的内容读取失败，已只改对象颜色。");
             }
         }
 
         private static void AppendUndoNote(StringBuilder builder)
         {
-            builder.Append(Environment.NewLine)
-                .Append("如需撤销：Ctrl+Z 一次即可全部还原。");
+            AppendLine(builder, "如需撤销：Ctrl+Z 一次即可全部还原。");
         }
 
         private static void AppendSample(StringBuilder builder, string label, string value)
@@ -150,7 +150,13 @@ namespace ChemForge.Models.Text.TextColor
                 return;
             }
 
-            builder.Append(Environment.NewLine).Append(label).Append(value);
+            AppendLine(builder, label + value);
+        }
+
+        /// <summary>换行后追加一行 —— 报告里每一条都是独立一行，写成方法省得漏。</summary>
+        private static void AppendLine(StringBuilder builder, string text)
+        {
+            builder.Append(Environment.NewLine).Append(text);
         }
 
         private static string Number(int value)

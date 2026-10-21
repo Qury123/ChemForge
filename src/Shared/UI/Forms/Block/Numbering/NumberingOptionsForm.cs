@@ -6,6 +6,7 @@ using System.Windows.Forms;
 using Autodesk.AutoCAD.Geometry;
 using ChemForge.Core.Block.Numbering;
 using ChemForge.Models.Block.Numbering;
+using static ChemForge.UI.Forms.Common.DialogStyle;
 
 namespace ChemForge.UI.Forms.Block.Numbering
 {
@@ -377,7 +378,7 @@ namespace ChemForge.UI.Forms.Block.Numbering
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(960, 760);
             MinimumSize = new Size(780, 640);
-            Padding = new Padding(8);
+            Padding = new Padding(FormPadding);
 
             TableLayoutPanel root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
@@ -508,7 +509,7 @@ namespace ChemForge.UI.Forms.Block.Numbering
             _lblSample.BackColor = SystemColors.Control;
             _lblSample.TabStop = false;
             _lblSample.Dock = DockStyle.Fill;
-            _lblSample.ForeColor = Color.FromArgb(0, 90, 160);
+            _lblSample.ForeColor = Accent;
             _lblSample.Margin = new Padding(0, 2, 0, 0);
             _lblSample.Text = "-";
 
@@ -761,17 +762,6 @@ namespace ChemForge.UI.Forms.Block.Numbering
         // 小工具
         // =====================================================================
 
-        private static GroupBox NewGroup(string text, int height)
-        {
-            GroupBox box = new GroupBox();
-            box.Text = text;
-            box.Dock = DockStyle.Fill;
-            box.Height = height;
-            box.Margin = new Padding(0, 0, 0, 6);
-            box.Padding = new Padding(8, 2, 8, 4);
-            return box;
-        }
-
         private static FlowLayoutPanel NewFlow()
         {
             FlowLayoutPanel flow = new FlowLayoutPanel();
@@ -825,16 +815,6 @@ namespace ChemForge.UI.Forms.Block.Numbering
             box.Checked = isChecked;
             box.Margin = new Padding(0, 4, 16, 0);
             return box;
-        }
-
-        private static Button NewButton(string text, int width)
-        {
-            Button button = new Button();
-            button.Text = text;
-            button.Width = width;
-            button.Height = 28;
-            button.Margin = new Padding(6, 0, 0, 0);
-            return button;
         }
 
         private static DataGridViewTextBoxColumn NewColumn(

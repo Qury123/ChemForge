@@ -155,7 +155,15 @@ namespace ChemForge.Commands.Block.BlockAttr
                 BatchAttrChangeAction action;
                 using (BatchAttrChangeForm form = new BatchAttrChangeForm(context))
                 {
-                    CommandHost.ShowDialogSafely(form);
+                    // 弹不出来就收工：此时 form.Action 还是默认值 Cancel，
+                    // 继续往下走等于拿用户没看过的默认值去改图。
+                    if (!CommandHost.ShowDialogSafely(form))
+                    {
+                        CommandHost.WriteMessageNoDynPrompt(
+                            doc.Editor,
+                            "\n面板没能显示出来，命令已中止（原因已写入插件日志）。");
+                        return;
+                    }
 
                     action = form.Action;
 

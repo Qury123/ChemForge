@@ -41,7 +41,7 @@ namespace ChemForge.UI.Forms.Text.TextColor
         /// </summary>
         public TextColorResultForm(string message)
         {
-            BuildLayout(Normalize(message));
+            BuildLayout(message);
         }
 
         private void BuildLayout(string message)
@@ -140,23 +140,6 @@ namespace ChemForge.UI.Forms.Text.TextColor
                 SystemFonts.MessageBoxFont,
                 new Size(Math.Max(width, 1), int.MaxValue),
                 TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
-        }
-
-        /// <summary>
-        /// 换行符归一化成 CRLF。
-        ///
-        /// Label 对 LF 也能换行，但报告由 TextColorReport 用 Environment.NewLine
-        /// 拼出来，正常就是 CRLF；这里兜的是“报告被别处拼过一道”的情况，
-        /// 顺便让窗口里的行距与命令行一致。
-        /// </summary>
-        private static string Normalize(string message)
-        {
-            if (string.IsNullOrEmpty(message))
-            {
-                return string.Empty;
-            }
-
-            return message.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
         }
     }
 }

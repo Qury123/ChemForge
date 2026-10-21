@@ -30,7 +30,7 @@ namespace ChemForge.UI.Forms.Common
             {
                 Text = "ChemForge",
                 Font = new Font(Font.FontFamily, 18F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(0, 90, 160),
+                ForeColor = DialogStyle.Accent,
                 AutoSize = true,
                 Location = new Point(24, 18)
             };

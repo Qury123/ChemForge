@@ -398,19 +398,25 @@ namespace ChemForge.Commands.Common
         /// <see cref="MethodImplOptions.NoInlining"/> 不是可选项：本方法体只有一行，
         /// 正是 JIT 最乐意内联的形状。一旦被内联进调用方，上面的隔离就完全失效，
         /// 而且不会有任何编译期或运行期提示 —— 只有 accoreconsole 里的一次崩溃。
+        ///
+        /// 返回面板是否真的关掉了（用户点了按钮）。异常一律吞掉并记日志，调用方必须看返回值：
+        /// 返回 false 时窗体的 <c>Action</c> 还停在默认值上，拿它当"用户的选择"就会
+        /// 直接改图 —— 这正是枚举把 Cancel 放在 0 的原因。
         /// </summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
-        internal static void ShowDialogSafely(Form form)
+        internal static bool ShowDialogSafely(Form form)
         {
             try
             {
                 AcadApp.ShowModalDialog(form);
+                return true;
             }
             catch (System.Exception ex)
             {
                 // 这里不能吞得无声无息：TCOLOR 当初"点了确定什么都不弹"，
                 // 命令行没提示、日志也一个字没有，只能靠猜。
                 Logger.Info("ShowModalDialog 失败：" + ex.Message);
+                return false;
             }
         }
 

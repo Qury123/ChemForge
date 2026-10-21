@@ -75,7 +75,11 @@ namespace ChemForge.Core.Text.TextColor
 
             TextColorResult result = applier.Result;
             result.TouchedIds = applier.TouchedIds;
-            result.Report = TextColorReport.Build(result, options);
+
+            // 报告不在这里拼。「给用户看什么、看多少」是命令层的事：
+            // 同一份结果，命令行要完整报告、提示框只要四行结论，
+            // 引擎把 Report 一起算好，命令层再按需要重拼，就会把同一份报告算两遍，
+            // 还容易两边不一致（TCOLOR 以前就是这样）。
             return result;
         }
 

@@ -84,7 +84,7 @@ namespace ChemForge.Tests.Application
         }
 
         [TestMethod]
-        public void ResultForm_NormalizesLoneLineFeedsToCrLf()
+        public void ResultForm_ShowsTheMessageExactlyAsGiven()
         {
             string failure = null;
             string messageText = null;
@@ -102,7 +102,10 @@ namespace ChemForge.Tests.Application
             delegate(Exception ex) { failure = ex.ToString(); });
 
             Assert.IsNull(failure, "结果提示框构造抛异常：" + failure);
-            Assert.AreEqual("甲\r\n乙\r\n丙", messageText, "只给 LF 的正文要补成 CRLF，行距才与命令行一致。");
+            Assert.AreEqual(
+                "甲\n乙\n丙",
+                messageText,
+                "提示框原样显示传进来的文字 —— Label 本来就认 LF，改写换行符只是多一道会出错的工序。");
         }
 
         [TestMethod]

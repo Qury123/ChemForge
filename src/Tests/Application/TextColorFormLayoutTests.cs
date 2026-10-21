@@ -136,6 +136,23 @@ namespace ChemForge.Tests.Application
             Assert.AreEqual(56, options.Blue);
         }
 
+        /// <summary>
+        /// 面板没弹出来时（<c>ShowModalDialog</c> 抛异常、异常被吞掉），
+        /// <c>form.Action</c> 还停在枚举的默认值上 —— 默认值必须是 Cancel。
+        ///
+        /// 默认成 Apply 的话，命令会拿「用户根本没看过的默认选项」直接改图；
+        /// 这个 bug 只有在弹窗失败时才发作，平时跑一百遍也看不出来，
+        /// 所以用一条断言把默认值钉住。
+        /// </summary>
+        [TestMethod]
+        public void DialogAction_DefaultsToCancel()
+        {
+            Assert.AreEqual(
+                TextColorDialogAction.Cancel,
+                default(TextColorDialogAction),
+                "枚举默认值必须是 Cancel（0），不能是 Apply。");
+        }
+
         private static List<string> Measure()
         {
             List<string> problems = new List<string>();

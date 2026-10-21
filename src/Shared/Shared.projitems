@@ -98,6 +98,7 @@
          （Net80 与 Net48 都设 UseWindowsForms=true，CommonCommands.cs 里对应分支用
          #if NET80 || NET48 同步放行） -->
     <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Common\AboutDialog.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Common\DialogStyle.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <!-- 「属性块批量编号」用法说明：文案单一来源 + 弹窗 + 挂在对话框右上角的按钮。
          WinForms，只在启用 WinForms 的工程里编译（与图块编号命令层同样的条件）。
          注意：只有 NumberingHelpButton 的 Attach() 会被编号面板 NumberingOptionsForm 调用，
@@ -122,6 +123,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorReport.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorResult.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorForm.Layout.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorForm.State.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorForm.Events.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorResultForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <!-- 图层锁定判断：批量命令的公共闸门（先查后写，避免一个锁定图层对象把整批事务拖回滚）。
          被 Core\Block\Numbering\AttributeService、Core\Text\TextColor\TextColorApplier、

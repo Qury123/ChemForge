@@ -117,7 +117,7 @@ namespace ChemForge.Commands.Text.TextColor
             }
 
             // ---- ② 面板回合循环 ----
-            TextColorOptions chosen = BuildInitialOptions();
+            TextColorOptions chosen = new TextColorOptions();
 
             while (true)
             {
@@ -134,7 +134,16 @@ namespace ChemForge.Commands.Text.TextColor
                 TextColorDialogAction action;
                 using (TextColorForm form = new TextColorForm(context))
                 {
-                    CommandHost.ShowDialogSafely(form);
+                    // 弹不出来就收工。这时候 form.Action 还是默认值 Cancel，
+                    // 要是拿它当「用户点了确定」，就会拿用户根本没看过的默认色把图改掉。
+                    if (!CommandHost.ShowDialogSafely(form))
+                    {
+                        CommandHost.WriteMessageNoDynPrompt(
+                            editor,
+                            "\n面板没能显示出来，命令已中止（原因已写入插件日志）。");
+                        return;
+                    }
+
                     action = form.Action;
 
                     // 「确定」与「① 在图纸中选择…」都会把面板上的当前选项带回来，
@@ -272,8 +281,9 @@ namespace ChemForge.Commands.Text.TextColor
                     editor.SetImpliedSelection(new ObjectId[0]);
                 }
             }
-            catch (System.Exception)
+            catch (AcException ex)
             {
+                Logger.Info("命令 TCOLOR 读取预选集失败：" + ex.Message);
             }
 
             return FilterTextObjects(ids);
@@ -309,12 +319,59 @@ namespace ChemForge.Commands.Text.TextColor
             return kept;
         }
 
+        /// <summary>文字类对象的三种类型；<see cref="Other"/> 表示不是这三种之一。</summary>
+        private enum TextKind
+        {
+            Other,
+            MText,
+            Text,
+            MultiLeader
+        }
+
+        /// <summary>
+        /// 判断一个对象属于哪种文字。
+        ///
+        /// 看 <c>ObjectClass.DxfName</c> 而不打开对象：选择集里可能混着成百上千个对象，
+        /// 逐个 Open 只为读个类型名不划算；真正要不要处理，执行阶段还会再判一次。
+        ///
+        /// 读不出来（已删除、代理对象、数据损坏）就按「不是文字」处理，但**要记日志**：
+        /// 静默跳过会让「我明明选了啊」这种问题完全无从查起。
+        /// </summary>
+        private static TextKind KindOf(ObjectId id)
+        {
+            if (id.IsNull || !id.IsValid)
+            {
+                return TextKind.Other;
+            }
+
+            try
+            {
+                string dxfName = id.ObjectClass.DxfName;
+                if (string.Equals(dxfName, "MTEXT", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TextKind.MText;
+                }
+
+                if (string.Equals(dxfName, "TEXT", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TextKind.Text;
+                }
+
+                if (string.Equals(dxfName, "MULTILEADER", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TextKind.MultiLeader;
+                }
+            }
+            catch (AcException ex)
+            {
+                Logger.Info("命令 TCOLOR 读取对象类型失败（已跳过）：" + ex.Message);
+            }
+
+            return TextKind.Other;
+        }
+
         /// <summary>
         /// 只留下文字类对象。
-        ///
-        /// 用 <c>ObjectClass.DxfName</c> 判断而不是逐个打开对象：
-        /// 后者在大选择集上要把每个对象都读进内存，纯属浪费 ——
-        /// 真正要不要处理，执行阶段还会再判一次。
         /// </summary>
         private static List<ObjectId> FilterTextObjects(IEnumerable<ObjectId> ids)
         {
@@ -327,23 +384,9 @@ namespace ChemForge.Commands.Text.TextColor
 
             foreach (ObjectId id in ids)
             {
-                if (id.IsNull || !id.IsValid)
+                if (KindOf(id) != TextKind.Other)
                 {
-                    continue;
-                }
-
-                try
-                {
-                    string dxfName = id.ObjectClass.DxfName;
-                    if (string.Equals(dxfName, "MTEXT", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(dxfName, "TEXT", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(dxfName, "MULTILEADER", StringComparison.OrdinalIgnoreCase))
-                    {
-                        kept.Add(id);
-                    }
-                }
-                catch (System.Exception)
-                {
+                    kept.Add(id);
                 }
             }
 
@@ -372,24 +415,17 @@ namespace ChemForge.Commands.Text.TextColor
 
             foreach (ObjectId id in ids)
             {
-                try
+                switch (KindOf(id))
                 {
-                    string dxfName = id.ObjectClass.DxfName;
-                    if (string.Equals(dxfName, "MTEXT", StringComparison.OrdinalIgnoreCase))
-                    {
+                    case TextKind.MText:
                         counts.MText++;
-                    }
-                    else if (string.Equals(dxfName, "TEXT", StringComparison.OrdinalIgnoreCase))
-                    {
+                        break;
+                    case TextKind.Text:
                         counts.Text++;
-                    }
-                    else if (string.Equals(dxfName, "MULTILEADER", StringComparison.OrdinalIgnoreCase))
-                    {
+                        break;
+                    case TextKind.MultiLeader:
                         counts.MultiLeader++;
-                    }
-                }
-                catch (System.Exception)
-                {
+                        break;
                 }
             }
 
@@ -399,11 +435,6 @@ namespace ChemForge.Commands.Text.TextColor
         // ==================================================================
         //  颜色的两种"从外部拿"
         // ==================================================================
-
-        private static TextColorOptions BuildInitialOptions()
-        {
-            return new TextColorOptions();
-        }
 
         /// <summary>
         /// 调系统的颜色选择框。取回来的可能是索引色也可能是真彩色，
@@ -443,8 +474,11 @@ namespace ChemForge.Commands.Text.TextColor
                 options.Normalize();
                 return true;
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
+                // 颜色框本身抛异常（AcWindows 里出问题、用户环境异常）就当没选：
+                // 命令继续用原来的选项，但日志里要留一笔。
+                Logger.Info("命令 TCOLOR 调系统颜色框失败：" + ex.Message);
                 return false;
             }
         }
@@ -509,8 +543,10 @@ namespace ChemForge.Commands.Text.TextColor
                     return true;
                 }
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
+                // 图上点选失败（对象已删除、图层被锁、事务冲突）就当没选，但留日志。
+                Logger.Info("命令 TCOLOR 吸取对象颜色失败：" + ex.Message);
                 return false;
             }
         }
@@ -531,6 +567,8 @@ namespace ChemForge.Commands.Text.TextColor
             {
                 return;
             }
+
+            int failed = 0;
 
             try
             {
@@ -557,16 +595,26 @@ namespace ChemForge.Commands.Text.TextColor
                             entity.UpgradeOpen();
                             entity.RecordGraphicsModified(true);
                         }
-                        catch (System.Exception)
+                        catch (AcException)
                         {
+                            failed++;
                         }
                     }
 
                     transaction.Commit();
                 }
             }
-            catch (System.Exception)
+            catch (AcException ex)
             {
+                Logger.Info("命令 TCOLOR 标脏重画失败（执行 REGEN 可刷新显示）：" + ex.Message);
+                return;
+            }
+
+            if (failed > 0)
+            {
+                Logger.Info(
+                    "命令 TCOLOR 有 " + failed.ToString(CultureInfo.InvariantCulture)
+                    + " 个改动对象没能标脏重画（执行 REGEN 可刷新显示）。");
             }
         }
     }
