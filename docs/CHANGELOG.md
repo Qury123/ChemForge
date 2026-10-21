@@ -9,8 +9,8 @@
 
 ### Added
 - **批量改色 TCOLOR 跑完弹「处理结果」提示框**
-  （2026-10-19 用户报：「点击确定修改后，除了命令行输出结果外，应该有弹出窗口给用户看」；
-  看过两版后定稿：「这种命令 BLKATTCHANGE 输出的就行了」）。
+  （2026-10-19 需求：命令执行完成后，除命令行输出外另需以弹窗呈现处理结果，形式与 `BLKATTCHANGE`
+  的收尾提示保持一致）。
   ① **弹的就是 AutoCAD 原生提示框**（`Application.ShowAlertDialog`，即 BLKATTCHANGE 收尾那个
   「AutoCAD 消息」窗口）。内容是**短版报告**：结论、目标颜色、范围、跳过统计（有才写）、撤销提示 ——
   与 BLKATTCHANGE 的收尾提示同一个体量；完整报告（样例、核对信息、刷新提示）仍打印在命令行里。
@@ -18,24 +18,38 @@
   开头三行逐字一致，只砍掉样例/核对/REGEN 提示（`Build()` 的输出保持不变）。
   ③ **`CommandHost.ShowAlertSafely` 改为返回 bool**：弹失败（异常）时返回 false 并写日志
   「ShowAlertDialog 失败：…」；TCOLOR 据此兜底弹自建窗体 `TextColorResultForm`
-  （一段短文字 + 一个「确定」，窗口大小跟着文字走）—— 宁可换个样子弹，
-  也不能像当初那样「点了确定，除了命令行什么都没有」。
-  ④ **走过的弯路（记下来免得再犯）**：先前据「`acmgd.dll` 的字符串堆里搜不到 `ShowAlertDialog`」
-  +「插件日志 19:37:13 开始执行 → 19:37:14 完成，只隔 1 秒」推断 2025 上它弹不出来，
-  于是绕开它改用自建窗体，并一路加码成「关于 ChemForge」那套品牌版式（白底、蓝色大标题、
-  大 logo、复制按钮）。实际 BLKATTCHANGE 用的就是 `ShowAlertDialog`，一直是好的 ——
-  用户看到品牌窗口后直接否掉：「简单点行不行，这么多内容，这么大 logo」。
-  教训：**别拿「没搜到方法名字符串」当「API 不可用」的证据**，同机另一个命令正在用同一个 API
-  就是最好的反证；日志时间差也只能证明"没等人点"，证明不了"没弹"。
+  （一段短文字 + 一个「确定」，窗口大小跟着文字走）—— 保证即使原生提示框失败，
+  命令行之外仍有可见的处理结果，不会出现「点击确定后无任何反馈」的情况。
+  ④ **实现取舍**：早前依据「`acmgd.dll` 中检索不到 `ShowAlertDialog`」与「插件日志里开始执行与完成仅相隔
+  1 秒」两点，判断该方法在 AutoCAD 2025 上不可用，遂改用自建窗体，并逐步扩展为白底、蓝色大标题、
+  大 logo 的品牌版式。实际 `ShowAlertDialog` 由 `accoremgd` 的 `Core.Application` 定义、经继承调用，
+  工作正常，`BLKATTCHANGE` 一直使用该方法；品牌版式因信息量与视觉权重过大，最终回到原生提示框。
+  教训：**不能以「检索不到方法名字符串」作为「API 不可用」的依据**，同机另一个命令正在使用同一个
+  API 即为反证；日志时间差只能说明未等待交互，不能说明未弹出。
   ⑤ **回归**：`TextColorReportTests` 5 个用例（短版只留结论、跳过统计不丢、与完整报告逐字一致、
   完整报告仍带样例/核对/消息、null 不抛）+ `TextColorResultFormTests` 4 个用例
-  （只有「确定」一个按钮、无大标题、尺寸跟着文字走、超长行折行、LF 归一化、空正文不抛），
+  （只有「确定」一个按钮、无大标题、尺寸跟着文字走、超长行折行、换行原样保留、空正文不抛），
   单元测试 **79/79 通过**。
 
 ### Changed
+- **面板版式参数集中至 `DialogStyle`**
+  品牌色、8px 窗体边距、组间 6px、按钮高 28 及 `NewGroup`/`NewButton`/`NewCaption` 三个工厂统一由
+  `UI/Forms/Common/DialogStyle.cs` 提供，BLKATTCHANGE、编号选项、关于、TCOLOR 四个面板共用。
+  迁移前后四个窗口渲染为 PNG 逐字节比对，SHA256 一致，无像素级变化。
+
+- **`TextColorForm` 拆分为三个 partial，`MinimumSize` 改为按比例计算**
+  907 行窗体按 布局 / 状态 / 事件 拆为 `TextColorForm.Layout.cs`、`.State.cs`、`.Events.cs`，
+  仅调整代码组织，不改变行为；`MinimumSize` 改为在 `OnLoad` 中按 `ClientSize` 比例计算，
+  高 DPI 与字体缩放下不再低于设计尺寸。
+
+- **`TextColorReport` 合并为 `BuildCore`，`TextColorEngine` 不再拼装报告**
+  短版与完整报告共用同一套行拼装逻辑，输出逐字不变；报告拼装统一由命令层负责，Core 不反向依赖展示层。
+
+- **`TextColorResultForm` 移除换行归一化**
+  `Label` 本身支持 LF，原有 CRLF 归一化及其测试一并移除。
+
 - **批量改色 TCOLOR 改成「先弹面板，面板上按钮回图纸框选」**（照 `BLKATTCHANGE` 的流程；
-  2026-10-21 用户要求：「先弹窗口，然后窗口上面加个按钮，让用户点击后进图纸框选范围，
-  然后自动识别其中的多行文字」）。
+  2026-10-21 设计：命令进入后直接呈现面板，面板顶部提供按钮，点击后返回图纸框选目标范围）。
   ① **不再用命令行提示拦人**：命令一进来直接弹面板；「先选好文字再敲命令」的预选集照旧优先使用。
   ② **面板顶部新增「① 在图纸中选择要改色的文字」按钮**：点它带着当前颜色选项关窗 → 命令行里框选
   （窗口/窗交都行，自动只留多行文字 / 单行文字 / 多重引线）→ 选完再弹回面板，顶部计数刷新。
@@ -55,15 +69,29 @@
   （嵌套布局后兄弟控件不再共用一个父坐标系），查找改成递归。单元测试 **80/80 通过**。
 
 ### Fixed
+- **批量改色 TCOLOR：面板显示失败时不再以默认颜色修改图形**
+  面板动作枚举未显式指定默认值（`Apply = 0`）。当 `ShowModalDialog` 抛出异常并被 `ShowDialogSafely`
+  捕获时，`form.Action` 仍取 `Apply`，命令会以默认设置（索引色 1 红）修改图中文字；若此时没有选择集，
+  还会进入无休止循环。现将默认值改为 `Cancel`（与 BLKATTCHANGE 等窗体一致），`ShowDialogSafely`
+  返回对话框是否实际显示；TCOLOR 与 BLKATTCHANGE 均在失败时中止并输出
+  「面板没能显示出来，命令已中止（原因已写入插件日志）」，异常原因同时写入插件日志。
+
+- **批量改色 TCOLOR：7 处异常被静默忽略的位置收窄并记录日志**
+  读取预选集、读取对象类型、吸取对象颜色、标记重画失败等操作不再无声消失；标记重画失败汇总为
+  「有 N 个改动对象没能标脏重画（执行 REGEN 可刷新显示）」。
+
+- **打包脚本：Release 构建前强制全量重编译**
+  Debug 与 Release 共用输出目录时，存在将 Debug 版 DLL 打入安装包的隐患；打包脚本现于生成安装包前，
+  对两个目标框架执行 `dotnet build -c Release -t:Rebuild`。
+
 - **批量改色 TCOLOR：去掉「未选择到文字对象。是否处理【全图】所有文字？」这一步**
-  （2026-10-21 用户报：「把这个删掉，不要这一步」，并贴出命令行输出
-  `未选择到文字对象。是否处理【全图】所有文字？ [是/否] <否>: *取消*`）。
+  （2026-10-21 调整：未选中文字时不再追问，直接提示后退出）。
   没选中文字就直接提示「未选择到文字对象，未做任何修改。」并退出 ——
   前面那个选择提示本来就能框选、也能全选，一步做得完的事不必再追问一遍；
   `SelectWholeDrawing()` 随之删除（要处理全图，在选择提示里全选即可）。
 
 - **批量改色 TCOLOR：「处理选项」第 4 个复选框叠字、被组框下边框裁掉**
-  （2026-10-19 用户报：「这个窗口下面处理选项处是有叠在一起了，调整一下排版」）。
+  （2026-10-19 问题：处理选项区域的复选框文字折行后相互重叠，被组框下边框裁切）。
   ① **根因**：「处理选项」组框只有 60px 高，第 4 个复选框「深入块定义内部（影响所有同名块参照）」
   被放进 210px 宽的第二列 —— 该文字要 216px（扣掉复选框方块后可用 188px）才排得下一行，
   于是折成两行，而控件没设 `AutoSize=false`、高度不撑开，第二行与第一行、组框下边框叠在一起被裁掉。
@@ -76,11 +104,10 @@
   证明用例真的能抓住这个 bug，而不是「改前改后都通过」的空转用例。
 
 - **PIPEBREAK / INSTBREAK 不再把「端接（T 型）」误判成交叉、在接点处挖出缺口**
-  （2026-10-18 用户报：「PIPEBREAK管道断线这个插件有个问题，这种是不应该断线的，因为没有交叉，需要修改判断逻辑」；
-  被问到这种端点正好落在另一条管线上的情况怎么处理时答：「这种情况最好指出给我，这是画图的问题，需要修改的」）。
+  （2026-10-18 问题：T 型端接被误判为交叉，主管在接点处被挖出缺口）。
   ① **根因**：端点判定用的是 `Tolerance.Global.EqualPoint * 2 = 2e-10` —— 那是 AutoCAD 判定「是不是同一个点」的量级。
   真实图纸里支管端点只要不是**逐位精确**落在主管上（捕捉没对准、图纸转换、大坐标下的双精度噪声），
-  就会被当成普通交叉，在接点处把主管挖出缺口（用户截图即此：竖管在横管端接处被断成两截）。
+  就会被当成普通交叉，在接点处把主管挖出缺口（表现为竖管在横管端接处被断成两截）。
   ② **两档判定**（`PipeBreakEngine.CollectIntersections`）：**第一档** 交点与端点精确重合（容差由 `2e-10` 改为 `1e-6`，
   仍远小于任何肉眼可见误差）→ 静默按端接跳过；**第二档** 交点落在**另一条**管线的端点/顶点附近（距离 < 缺口半宽）→
   按端接跳过**并单独报出**。第二档只查「另一条」：避让管线自己的端头贴近交点仍走原来的「端头太短」分支，
@@ -93,7 +120,7 @@
   ⑤ **验证**（2026-10-19 实测）：两支 DLL 均 0 警告 0 错误；**单元测试 69/69**；
   **端到端 5 场景 32 断言全绿**（含新增场景），脚本末尾注册表自检确认 `/isolate` 生效、真实 AutoCAD 配置未被改动。
   **并做了「修复前」对照**：把容差临时改回 `2e-10`、同时关掉第二档后重跑，新场景 2 条断言如期 FAIL
-  —— T1 主干被断成 `[-200,50][150,200]`（6 条线），正是用户截图里那个接点缺口；还原后复跑全绿。
+  —— T1 主干被断成 `[-200,50][150,200]`（6 条线），正是该缺陷的接点缺口；还原后复跑全绿。
   这条对照证明新增回归用例真的能抓住该 bug，而不是「改前改后都通过」的空转用例。
   accoreconsole 实测报出文字：`[跳过明细] 交点贴近管线端点(没接准) 1` +
   `[端点没接准] 1 处交点落在管线的端点/顶点附近 …… · 交点 (500, 100)：图层 PIPE 的管线端点/顶点 (499.6, 100) 偏离 0.4`。
@@ -102,7 +129,8 @@
 
 ### Added
 - **支持纯 AutoCAD（2019–2024，含 2022），安装器按 CAD 版本分流两支 DLL**
-  （2026-10-16 用户问「假如我安装在 CAD2022 的话，还会有之前的问题吗」，核查后要求「你先修复……全部完成了导出 exe 我再去 CAD2022 机器上测试」）。
+  （2026-10-16 目标：确认在纯 AutoCAD 2019–2024（含 2022）环境下的可用性，并在修复完成后产出可交付的
+  exe 供实机验证）。
   核查结论：交接消息声称的两条根因里，**「缺少 `[assembly: ExtensionApplication]` 导致初始化不跑」被证伪**
   （全仓没有该特性，但 `Initialize()` 每次启动都执行——AutoCAD 会扫描 `IExtensionApplication` 实现，
   唯一实现时不需要该特性）；**「菜单挂载脚本写死 PnP.cuix」成立**；另发现第三条**更致命**的问题：
@@ -128,9 +156,9 @@
 
 ### Changed
 - **卸载确认改成卸载窗口里的「一页」，点「取消」一个文件都不删**
-  （2026-10-16 用户要求：「删除日志应该在卸载之前那个页面，然后让用户勾选或者不勾选后，再进行卸载」，
-  随后追加：「这个卸载确认不能在后面那个大的窗口里吗……弹窗丑的不行」）。
-  ① **顺序**：`AskDeleteUserData` 原来挂在 `usPostUninstall` —— 文件都删光了才问，用户看到的是既成事实。
+  （2026-10-16 需求：日志删除的询问应前置到卸载确认页，由用户勾选后再执行；确认界面并入卸载窗口本身，
+  不再另行弹出小窗口）。
+  ① **顺序**：`AskDeleteUserData` 原来挂在 `usPostUninstall` —— 文件删除完成后才询问，选择已无意义。
   现改挂 `usUninstall` 且排在所有破坏性动作**之前**，用户的选择先存进局部变量，等清理动作全部做完
   再执行删除（即便中间某步失败，用户的选择依然算数）。
   ② **形态**：确认界面从 440×216 的小弹窗改成**与卸载窗口同尺寸、同位置的一页**：
@@ -154,8 +182,8 @@
   `%TEMP%\ChemForge-register-error.log`。
   ⑤ 安装包更新为 **2,686,471 B**，`sha256=a0156b8deaab81aef4c16d8f6aa4da1d7b21027babf34c25204e0a0176711fd0`。
 - **安装与卸载体验重做：品牌化排版 + AutoCAD 开着时不再默默装坏**
-  （2026-10-16 用户要求：「这个安装和卸载也要做好一点，一个是排版，另一个是使用要更合理，
-  比如由于 CAD 开着导致的安装和卸载失败，该有应对对策」）。
+  （2026-10-16 需求：安装与卸载界面重新排版以统一品牌样式，并对「AutoCAD 正在运行导致安装或卸载失败」
+  给出明确处置）。
   ① **排版**：安装包换用品牌图标（`SetupIconFile`，从 `branding\ico\ChemForge-v3.ico` 取最大帧）；
   向导左侧大图与右上角小图改为按品牌色板程序化生成的 `Assets\Wizard-100.bmp`(202×386) /
   `Wizard-150.bmp`(336×643) / `WizardSmall-100.bmp`(58×58) / `WizardSmall-150.bmp`(97×97)
@@ -171,9 +199,9 @@
   可能先于 `PrepareToInstall` 运行**，到那时才拦，旧版可能已经被卸掉一半），**卸载**在
   `InitializeUninstall` 拦一道；静默模式（`WizardSilent` / `UninstallSilent`）下不弹窗，
   直接以非零退出码拒绝，以免升级过程中旧卸载器突然弹框。
-  （2026-10-16 用户追加要求：「假如卸载时，我CAD开着，需要提示用户先关闭CAD，然后不进行
-  任何卸载操作，除非CAD关闭」——据此把原来卸载侧的「重试 / **跳过** / 放弃」改成
-  **只有「重试 / 取消」**：跳过会让卸载删掉一半文件、装出半成品，安装侧也一并去掉跳过，
+  （2026-10-16 需求补充：卸载时若 AutoCAD 正在运行，应提示先关闭并中止，不执行任何文件操作 ——
+  据此把卸载侧原有的「重试 / **跳过** / 放弃」改为**只有「重试 / 取消」**：跳过会让卸载删掉一半文件、
+  装出半成品，安装侧也一并去掉跳过，
   两侧行为一致。**点「取消」零改动**：安装不写一个文件、卸载不删一个文件。）
   ③ **其它**：「准备安装」页新增「附加说明」（读卸载登记键的 `DisplayVersion` 说明这是升级、
   要给几个 AutoCAD 启用、CAD 当前是否还开着）；`SetupMutex` 防止两个向导同时改 CUIx 与注册表；
@@ -192,7 +220,7 @@
 
 ### Added
 - **版本号统一升到 `1.1.0`，并产出安装包 `ChemForge_Setup_v1.1.0.exe`**
-  （2026-10-16 用户要求：「直接打包个新的exe文件给我吧，exe需要更新版本，既然是加新功能那就 1.1.0」）。
+  （2026-10-16 版本规划：新增功能对应次版本号，统一升至 1.1.0 并产出安装包）。
   ① **四处版本号一次改齐**：`deploy\Installer\ChemForge.iss:30` 的 `#define MyAppVersion`（安装包
   文件名与「关于」页版本都取自它，是单一来源）→ `deploy\Bundle\ChemForge.bundle\PackageContents.xml`
   的 `AppVersion` 与**两个** `ComponentEntry` 的 `Version` → 新增
@@ -215,8 +243,8 @@
   发布说明见同目录 `RELEASE_NOTES_v1.1.0.md`。
 
 - **仪表线自动打断（`INSTBREAK` = INSTRument + BREAK）：管线打断的镜像命令，固定打断仪表线**
-  （2026-10 用户要求：「和管线自动打断类似，但图层要点选两次（仪表线图层 + 管线图层），
-  打断方向固定往仪表线那边去，所以缺口方向那一步可以删掉」）。
+  （2026-10 需求：与管线自动打断一致，但图层需点选两次（仪表线图层 + 管线图层），打断方向固定朝向仪表线，
+  因此不再询问缺口方向）。
   ① **交互**：缺口/架桥总宽度 → 模式 `[缺口(D)/架桥(H)]` → 架桥时问半圆凸起方向 →
   **点选仪表线图层**（回车用上次）→ **点选管线图层**（回车用上次）→ 框选仪表线。
   与 `PIPEBREAK` 的唯一差别就在这里：图层点两次，且**不再询问缺口方向**（该步骤已删除，
@@ -245,7 +273,7 @@
   只收 `ProductName` 与 `AcadLocation` 都非空的；`ACAD-8101`、`ACAD-8117` 这类空壳键自动过滤；
   复选框默认全选）→ 选择安装位置（默认 `%LOCALAPPDATA%\Programs\ChemForge`，取消
   `DisableDirPage=yes`）→ 附加任务（桌面帮助快捷方式，默认不勾）→ 安装进度 → 完成
-  （「查看帮助」与「立即启动 AutoCAD」两个复选框**都默认不勾**，用户 2026-10-13 要求）。
+  （「查看帮助」与「立即启动 AutoCAD」两个复选框**都默认不勾**）。
   ② **装完自动做的事**：拷 `ChemForge.bundle` 到安装目录 → 在
   `%APPDATA%\Autodesk\ApplicationPlugins\ChemForge.bundle` 建**目录联接**（`mklink /J`，失败回退
   `xcopy`；已存在则原样保留，重装不误删）→ 向 `TRUSTEDPATHS` 追加 4 条真实路径（安装目录两个 +
@@ -254,7 +282,7 @@
   （**`SW_HIDE`，不再弹 PowerShell 窗口**，安装与卸载共用同一函数）。
   ③ **卸载**：反向清理（摘联接用 `[IO.Directory]::Delete($p,$false)` —— **绝不递归删联接**，
   否则会连安装目录一起删）→ 开始菜单 `卸载 ChemForge` 快捷方式 + Windows「设置 → 应用」登记。
-  ④ **`PrivilegesRequired` 由 `lowest` 改为 `admin`**：用户实测**提权才能通过本机火绒企业版的拦截**
+  ④ **`PrivilegesRequired` 由 `lowest` 改为 `admin`**：实测**提权是绕过本机火绒企业版拦截的前提**
   （普通双击被拒在"创建 `unins000.exe`"这一步：错误 5 拒绝访问），详见
   `KnownIssues.md`《火绒企业版（ESEndpoint）拦截"未提权"的安装/卸载程序》。
   ⑤ **只写注册表登记不足以让插件加载**（2026-10-13 实测）：`AcMr` / `App Manager` / `CloudAccess`
@@ -298,7 +326,7 @@
   「确定要卸载 **ChemForge · 工艺匠造工坊** 吗？」。核对了语言包里其余 11 条被覆盖的消息，
   占位符均与 `Default.isl` 一致。
 
-- **安装 / 卸载在 AutoCAD 开着时不再可能"改一半"（用户 m01440 要求的硬拦，已实现并逐项实测）**：
+- **安装 / 卸载在 AutoCAD 开着时不再可能"改一半"（硬性拦截，已逐项实测）**：
   详见上面 `### Changed` 的 ② —— 卸载侧去掉「跳过」按钮、新增 `InitializeSetup` 最早拦截；
   本轮用「同 `[Code]`、免 UAC、去掉 AutoCAD 注册副作用」的测试包 + 假 `acad.exe`
   （复制 `ping.exe` 改名，`IsAutoCadRunning` 只看 `tasklist` 的映像名）跑了 7 个用例，全部通过：
@@ -332,14 +360,14 @@
   即修复生效。④ 挂载脚本头部的"时间戳陷阱"说明同步改写为**已在插件侧根治**，不再需要手工删 CUIx。
 
 - **端到端验收脚本会把系统变量写回用户的 AutoCAD 配置（已修复：改用 `/isolate`）**：
-  用户报告「FILEDIA 又被改了，还有 DYNMODE」。查证结果：
+  现象：`FILEDIA` 与 `DYNMODE` 在测试运行后被写回默认值。查证结果：
   ① `accoreconsole.exe` 默认使用当前用户的配置目录与注册表键，**退出时会把本次会话动过的系统变量
   落成 `HKCU\Software\Autodesk\AutoCAD\R25.0\ACAD-8117:804\FixedProfile\...` 下的"偏离记录"**；
   实测脚本里设过的 `FILEDIA` / `CMDDIA` / `SECURELOAD` / `ATTREQ` 四条**全部落盘**，与现场发现的
   四条偏离记录逐条对上 —— 这部分责任在脚本，已修。
   ② `DYNMODE` **不是这套脚本写的**：脚本从不设它，且对照实验（跑一次不设任何系统变量的
   `accoreconsole`）显示它也不会被写回；`port\InstrumentNumbering\tools\cad-test\` 的 COM 测试脚本
-  注释里已记录"用户报告动态输入（DYNMODE）在早前的测试运行后变回默认值"，即**该现象早于本次开发**。
+  注释里已记录“动态输入（DYNMODE）在早前的测试运行后变回默认值”，即**该现象早于本次开发**。
   ③ **修复**：`src\Tests\Integration\Run-IntegrationTests.ps1` 改为
   `accoreconsole /isolate CFE2E <临时目录> /s`（语法为 `/isolate <regkey> <userDataFolder>`，
   两个参数都要给、且放在 `/s` 之前），实测真实配置完全不被写；脚本末尾新增**注册表自检**，
@@ -357,8 +385,7 @@
   原条目的现象 / 判据 / 取证方法已并入 `docs\DeveloperGuide\ManualTesting.md` 同名小节。
 
 ### 已知问题（记录待办）
-- 新增 `docs/DeveloperGuide/KnownIssues.md`：记录两个**已查清根因、按要求暂不修复**的问题（用户指示
-  "这个问题要记录，以后最后在解决"）：
+- 新增 `docs/DeveloperGuide/KnownIssues.md`：记录两个**已查清根因、本版暂不修复**的问题（记录待办，后续版本处理）：
   **KI-1** 启动时弹"安全性 - 未签名的可执行文件"确认框 —— 插件 DLL 无签名且 `TRUSTEDPATHS`
   实际未写入（`Install-Dev.ps1` 在值不存在时静默跳过），不点确认框 AutoCAD 就卡在启动、.NET 插件
   完全不加载（此时经典菜单栏/功能区仍显示 ChemForge，因为那是 CUIX 声明式挂载）；
@@ -371,34 +398,33 @@
   **未在 CAD 进程内验证**。
 
 ### Removed
-- **移除 `docs/architecture/` 整个目录**（用户要求："docs\architecture这个文件夹就可以删掉了，不需要体现，
-  随时可以生成的"）：原含 799 KB 的 archify 生成页 `ChemForge-Architecture.html` 与 19 KB 的规格源
+- **移除 `docs/architecture/` 整个目录**（该目录可随时由 archify 从当前代码重新生成，不需要随仓库体现）：原含 799 KB 的 archify 生成页 `ChemForge-Architecture.html` 与 19 KB 的规格源
   `chemforge-architecture.json`。两者都**不是插件运行所需**，且随时可由 archify 从当前代码重新生成，
   故不再随仓库分发（含未推送历史一并清除，本地备份留在 `TEMP/_backup_before_rewrite/`）。
   `docs/DeveloperGuide/Architecture.md` 顶部指向该 HTML 的链接已改为"按需生成"的说明。
 
 ### Changed
-- **文字格式处理组精简：移除「批量修改多行文字倾角」与「批量修改多行文字宽度因子」；「编号用法说明」改为「属性块批量编号」对话框右上角的按钮弹窗**（用户要求："插件里的批量修改多行文字倾角和宽度因子这两行取消，编号用法说明这边也取消，改到属性块批量编号，在这个属性块批量编号的可视化窗口的右上角这块可以加个按钮，点击就输出这个编号用法说明，也是以弹窗的形式输出"）。
+- **文字格式处理组精简：移除「批量修改多行文字倾角」与「批量修改多行文字宽度因子」；「编号用法说明」改为「属性块批量编号」对话框右上角的按钮弹窗**（精简文字格式处理组菜单；用法说明改为对话框内按钮触发的弹窗）。
   ① **菜单**（`src\Shared\Application\MenuDefinition.cs`）：删掉 文字格式处理 组的 `TANGLE` / `TWIDTH` 两行与 图块编号 组的 `BLKNUMHELP` 一行 —— 文字格式处理组只剩 `TCOLOR`，图块编号组只剩 `BLKNUM`；分组与顺序不变，仍是五组四条分隔线。
-  ② **命令与代码一并删除**（用户明确要求"连命令和代码一起删除"）：`CommandNames.TextOblique` / `TextWidth` 常量、`RibbonBuilder.IconMap` 两条图标映射、`PackageContents.xml` 两条 `<Command>`、`Shared.projitems` 两条 Compile 项、以及 `src\Shared\Commands\Text\TextObliqueCommand.cs` 与 `TextWidthCommand.cs` 两个文件全部移除。`TextFormatter` / `TextFormatOptions` 保留（`TCOLOR` 仍在用），`ExtensionMethods.ToRadians` 随之失去唯一调用者但按原决定保留（见下方 2026-10 条目）。
+  ② **命令与代码一并删除**（命令与入口一并移除，不保留别名）：`CommandNames.TextOblique` / `TextWidth` 常量、`RibbonBuilder.IconMap` 两条图标映射、`PackageContents.xml` 两条 `<Command>`、`Shared.projitems` 两条 Compile 项、以及 `src\Shared\Commands\Text\TextObliqueCommand.cs` 与 `TextWidthCommand.cs` 两个文件全部移除。`TextFormatter` / `TextFormatOptions` 保留（`TCOLOR` 仍在用），`ExtensionMethods.ToRadians` 随之失去唯一调用者但按原决定保留（见下方 2026-10 条目）。
   ③ **用法说明单一来源**：新增 `src\Shared\UI\Forms\Block\Numbering\NumberingHelpText.cs`（`CommandLineText` = 原 `BLKNUMHELP` 打印的整段文案，逐字搬运；`DialogText` = 去掉开头换行的同一份文案），`src\Shared\BlockNumbering\Commands.cs` 里 `BLKNUMHELP` 改为 `doc.Editor.WriteMessage(ChemForge.UI.Forms.Block.Numbering.NumberingHelpText.CommandLineText)` —— 命令行输出与弹窗**逐字一致，不会再各自漂移**。
   ④ **对话框右上角按钮**：新增 `NumberingHelpForm.cs`（只读等宽文本框 + 关闭按钮，`ShowDialog` 模态弹窗）与 `NumberingHelpButton.cs`（在「选择要编号的块（两步）」分组框右侧挂 112×28 的「编号用法说明」按钮，文字与「① 在图纸中选一个样板块」按钮顶边对齐，跟着窗口缩放走 `box.Layout` 重算）；按钮只调纯 WinForms，**不碰 `AcadApp.ShowModalDialog`**（该 API 在 accoreconsole 里会原生 AV，见集成文档维护注意事项第 2 条）。
   ⑤ **同步层**：`deploy\Dev\Sync-BlockNumbering.ps1` 记录的偏差由 1 处增加到 3 处 —— 偏差 2 = `Commands.cs` 的用法说明字面量换成常量引用，偏差 3 = `UI\NumberingOptionsForm.cs` 在 `box.Controls.Add(flow);` 之后插入一行 `NumberingHelpButton.Attach(box);`；两处都先校验锚点恰好匹配 1 次，否则报错退出。
   验证：Net80 构建 0 警告 0 错误；`Sync-BlockNumbering.ps1 -Verify` → 施加偏差后 **18 个源文件 + 自测程序与源仓库逐字节一致**、算法自测 **65/65 通过**；单元测试 **30/30 通过**（原 27 个用例 + 新增 `NumberingHelpTextTests` 3 个）。**仍需在 AutoCAD 内人工确认**：菜单三行消失、按钮弹窗、`BLKNUMHELP` 命令行输出不变。
   **2026-10-13 现场确认**：菜单三行已消失（`PnP.cuix` 挂载复核 = 8 项 + 4 条分隔线、8 个宏；插件重建的支持目录 CUIx = 8 个 PopMenuItem / 8 个 MenuMacro / 8 个 RibbonCommandButton，旧标识符残留 0），右上角「编号用法说明」按钮弹窗可用；弹窗正文换行缺陷见下方 `### Fixed`（已修，单元测试 32/32）。
-- **批量修改块属性：命令与全部标识由 `ATTRREP` 改名为 `BATATTCHANGE`**（用户要求："把这个插件的名称和命令都改一下吧，原来是ATTRREP，现在要改为BATATTCHANGE，更直观一点，所有的内容都修改，包括文件名、文件内容、命令等"）。
+- **批量修改块属性：命令与全部标识由 `ATTRREP` 改名为 `BATATTCHANGE`**（原名称辨识度不足，统一更名，覆盖命令名、文件名与文件内容）。
   ①命令名 `CommandNames.BatchAttrChange = "BATATTCHANGE"`（`src\Shared\Application\CommandNames.cs:31`），**不保留 `ATTRREP` 别名**；
   ②**22 个文件改名**：`AttributeReplace*` → `BatchAttrChange*`（含命令/采集器/引擎/写入器/报告/记忆存储/9 个模型/窗体），图标 `attrreplace_16/32.png` → `batattchange_16/32.png`，
   集成文档 → `docs\DeveloperGuide\BatchAttrChange-Integration.md`，自测工程目录 → `tests\BatchAttrChangeSelfTest\`（该工程不在 `ChemForge.sln` 里，无需改 sln）；
   ③**31 个文件内容改写**（`AttributeReplace`→`BatchAttrChange`、`attrreplace`→`batattchange`、正则 `ATTRREP(?![:\-])`→`BATATTCHANGE`），
   负向先行断言**刻意保住** `ATTRREP:` 与 `ATTRREP-` 两种形式 —— 那是原 AutoLISP 插件的函数/变量名（`ATTRREP:collect-tags`、`ATTRREP-DIAG` 等），文档里作为移植出处引用必须原样保留；
   ④**记忆文件迁移**：`BatchAttrChangeMemoryStore` 的 `FileName`/根节点改为 `BatchAttrChange.xml`，`Load()` 在新文件不存在而旧的 `AttributeReplace.xml` 存在时读取旧文件、
-  写成新文件名、并把旧文件改名为 `AttributeReplace.xml.migrated` 留底（用户此前记住的那套值不会丢）；
+  写成新文件名、并把旧文件改名为 `AttributeReplace.xml.migrated` 留底（此前保存的那套值不会丢）；
   ⑤**图标链路**：`RibbonBuilder.IconMap` 的基础名与嵌入资源名（`src\Shared\Shared.projitems:126` 是通配 `Icons\*.png`）随文件改名同步，`EnsureIconFile` 落盘的散图名变为 `chemforge_batattchange_16/32.png`。
   验证：Net80 构建 0 警告 0 错误（`ChemForge.dll` 195,072 字节）、纯逻辑自测 **137 项通过 0 失败**、
   部署产物 UTF-8/UTF-16 双偏移字符串核对 14/14 命中且旧图标名已消失。
   **仍需 CAD 内验收**：功能区按钮、经典菜单栏（`PnP.cuix` 快照必须重挂，见下）与新命令名一致。
-- **仪表自动编号向导界面改版：文字与排版整体照 ChemForge「属性块批量编号」（`BLKNUM`）+ `编号规则` 增加后缀**（用户要求："你的文字、排版风格全部参照这个来" / "在编号规则里，除了编号开头以外，需要加上后缀，效果、预览和实际工作情况也要更新"）。
+- **仪表自动编号向导界面改版：文字与排版整体照 ChemForge「属性块批量编号」（`BLKNUM`）+ `编号规则` 增加后缀**（界面与排版统一对齐「属性块批量编号」；编号规则新增后缀，效果行、预览与实际写入需同步）。
   ① 版式由五步向导改为**两页**：第 1 页 = BLKNUM 式单页配置（`选择要编号的块（两步）` / `目标属性` / `仪表类型` / `编号规则` / `排序规则（默认：先上后下，同一行从左到右）` / `写入行为`），
   第 2 页 = `编号顺序示意图（点击圆圈选中，下方按钮调序）` + `块清单（多选后可上移/下移/成组/合并）`；
   ② 风格对齐 BLKNUM：不设自定义字体（系统默认 + `AutoScaleMode.Font`）、控件文字 **0 个 emoji**、分组框/字段/按钮/配色同款，窗体 `ClientSize 960×760` / `MinimumSize 780×640` / `Padding 8` / `Sizable`；"运行日志"面板改为**右下角一行状态行**；
@@ -406,7 +432,7 @@
   **CAD 内实测通过**（2026-10-12 12:43，`run_wizard_test.ps1 -PickLoop -Write -CloseAcad -Suffix '-A'`，全自动无人工点击）：两页流程走通、取消拾取后同一实例重开、
   9 块实际写入 `001-A … 009-A`（`== 9 attribute value(s) changed ==`，预置的 `3899` 被覆盖）、行优先顺序与 Python 原版一致、无崩溃；脚本另修掉两处问题（`TRUSTEDPATHS` 原值要先剔除 DLL 目录再记；`-Prefix`/`-Suffix` 参数）。
   验证：UiDemo/Acad 构建 0 警告 0 错误、单元测试 41/41、差分 57/57、`--selftest` 全绿。证据见 `port\InstrumentNumbering\docs\验收说明.md` 第 6 节。
-- **仪表自动编号（`port\InstrumentNumbering\`）：步骤①改为 ChemForge「属性块批量编号」同款两步选块模型**（用户要求："像第一步选择块就采用属性块批量编号的逻辑，原有的逻辑不是很好用，容易卡顿"）。
+- **仪表自动编号（`port\InstrumentNumbering\`）：步骤①改为 ChemForge「属性块批量编号」同款两步选块模型**（原选择块流程易卡顿，改为「属性块批量编号」同款两步选块模型）。
   向导不再用"隐藏窗口 + 回调抢焦点"读选择：点「① 在图纸中选一个样板块」/「② 选择范围」时只置 `Action = PickSample / PickRange` 并**收起窗口**（实例复用、不 `Close`），
   命令层在 CAD 里完成拾取（`PromptEntityOptions` / `GetSelection`，不选直接回车 = 整个图形）后用 `ApplySample()` / `ApplyCandidates()` 回填、同一实例重开；
   状态行照搬 BLKNUM 三态（尚未选择 / 再点 ② 框选 / 样板 + 可编号数 + 跳过数）。新增命令 `INSTRNUM`（向导；`Modal | UsePickSet`，带预选集兜底：首块当样板、其余按同名收集），
@@ -435,14 +461,14 @@
   改用 `<工作区根目录>\net\.venv\Scripts\python.exe -m pip`。
 
 ### Fixed
-- **「编号用法说明」弹窗正文挤成一行、显示不全**（用户反馈："编号用法说明有问题，你没有换行吧，显示不全"）：
+- **「编号用法说明」弹窗正文挤成一行、显示不全**（现象：弹窗正文未换行、显示不全）：
   `NumberingHelpText.DialogText` 原先只做 `TrimStart('\n')`，而整段文案是**纯 LF** 的（`CommandLineText` 每段字面量以 `\n` 开头）——
   WinForms `TextBox` 底层是原生 EDIT 控件，**只把 `\r\n` 当换行**，只给 `\n` 就整段显示成一行
   （本机实测 `SendMessage(EM_GETLINECOUNT)`：LF 版 = 1、CRLF 版 = 3；命令行那份没问题，所以现象是"命令行正常、弹窗一行"）。
   现在 `DialogText` = `CommandLineText.TrimStart('\n').Replace("\r\n", "\n").Replace("\n", "\r\n")`，**只转弹窗**；
   命令行那份保持 LF（`Editor.WriteMessage` 按 `\n` 断行）。新增 `CommandLineText_UsesLfOnly` / `DialogText_DropsLeadingNewlineKeepsSameContent` /
   `DialogText_UsesCrlfOnlyAndIsReallyMultiline` 三个用例锁住这两条，单元测试 **32/32 通过**。
-- **「编号用法说明」按钮与同行按钮没对齐**（用户反馈："排版优化一下，没对齐啊明显"，附对话框截图）：
+- **「编号用法说明」按钮与同行按钮没对齐**（现象：按钮顶边与同行其它按钮不一致）：
   `NumberingHelpButton.AlignHelp` 把**相对分组框客户区**量出来的行高（`flow.Top + 邻居按钮.Top`）直接赋给
   **相对宿主面板**的 `help.Top`，于是整整多出一个宿主面板的高度。离线复刻该分组框实测：
   按钮顶边比「① 在图纸中选一个样板块」低 **18px**（= `host.Top`）、右边距 22px 而左边距 14px。
@@ -453,7 +479,7 @@
   会把支持目录 `ChemForge.cuix` 的 mtime 刷到挂载时刻；而插件判断要不要重建菜单文件用的是
   「cuix 时间 < 插件 DLL 时间」（`src\Shared\CAD\Impl\MenuService_Net80.cs:237-249` `IsOlderThanPlugin`，`:109-119` 调用）
   —— 于是「编译 → 挂载」之后 CUIx 恒比 DLL 新，插件永远跳过重建，**改了 `MenuDefinition` 也传不进 CUIx**，
-  挂载收割到的还是旧菜单（本次表现为"删掉的三行菜单仍在"，用户截图质问）。
+  挂载收割到的还是旧菜单（表现为已删除的三行菜单仍然存在）。
   已在脚本头部 `.PARAMETER CuixSource` 写明正确顺序（① 编译部署 → ② 删/改名支持目录 CUIx 与 `chemforge.mnr`/`ChemForge_light.mnr`
   → ③ 启动 AutoCAD 一次让插件重建权威版本 → ④ 完全退出 AutoCAD 再挂载），并在收割来源处常显一行
   「请核对菜单项数 = 当前 MenuDefinition 的叶子项数」（**刻意不做"来源比插件 DLL 新"的 `Write-Warning`**：
@@ -483,7 +509,7 @@
   只有组码 62 能 100% 表达 256=随层 / 0=随块 / 1-255=ACI；
   ③ **文字对齐只在给了非 0 值时写组码 72**（原插件 `(and just (/= just 0))`）；
   ④ **目标图层恰为 `"0"` 且用户没指定颜色时，颜色按随层(256)写**（否则随块属性跟随块所在层显示成背景色，
-  即用户报过的"换成 0 层却还是 000"），并在报告里补一句「（目标图层为 0，自动写入）」；
+  即此前出现的“换成 0 层却还是 000”），并在报告里补一句「（目标图层为 0，自动写入）」；
   ⑤ **有效块名用块表反查实现**（托管 API 无 `EffectiveName`）：`BlockTableRecord.IsDynamicBlock &&
   !IsAnonymous` 的记录取 `GetAnonymousBlockIds()` 建「匿名块 → 定义名」映射，「全图同名块」改用
   `GetBlockReferenceIds(true, true)` 反查而非全库扫 INSERT；
