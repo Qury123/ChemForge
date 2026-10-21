@@ -106,49 +106,23 @@ namespace ChemForge.Commands.Text.TextColor
                 editor,
                 "\n说明：本命令会同时改对象颜色 + 清除文字内部的颜色覆盖代码。");
 
-            // ---- ① 取待处理对象 ----
+            // ---- ① 待处理对象 ----
+            // 先选好文字再敲命令的，直接用预选集；没选就等面板上那个按钮。
+            // 与 BLKATTCHANGE 一致：命令先弹面板，选择由用户在面板上发起，
+            // 不再用命令行提示拦一道（2026-10-21 用户要求：「先弹窗口，然后窗口上面加个按钮」）。
             List<ObjectId> targets = FilterTextObjects(ReadImpliedSelection(editor));
-
-            if (targets.Count == 0)
+            if (targets.Count > 0)
             {
-                targets = PromptSelection(editor);
+                LogSelection(targets);
             }
-
-            if (targets.Count == 0)
-            {
-                PromptKeywordOptions options = new PromptKeywordOptions(
-                    "\n未选择到文字对象。是否处理【全图】所有文字？")
-                {
-                    AllowNone = true
-                };
-                options.Keywords.Add("是");
-                options.Keywords.Add("否");
-                options.Keywords.Default = "否";
-
-                PromptResult answer = editor.GetKeywords(options);
-                if (answer.Status == PromptStatus.OK && answer.StringResult == "是")
-                {
-                    targets = SelectWholeDrawing(editor);
-                }
-            }
-
-            if (targets.Count == 0)
-            {
-                CommandHost.WriteMessageNoDynPrompt(editor, "\n已取消，未做任何修改。");
-                return;
-            }
-
-            TextTypeCounts counts = CountByType(targets);
-            Logger.Info(
-                "命令 TCOLOR 选中文字：多行文字 " + counts.MText
-                + " / 单行文字 " + counts.Text
-                + " / 多重引线 " + counts.MultiLeader + "。");
 
             // ---- ② 面板回合循环 ----
             TextColorOptions chosen = BuildInitialOptions();
 
             while (true)
             {
+                TextTypeCounts counts = CountByType(targets);
+
                 TextColorFormContext context = new TextColorFormContext
                 {
                     MTextCount = counts.MText,
@@ -163,7 +137,9 @@ namespace ChemForge.Commands.Text.TextColor
                     CommandHost.ShowDialogSafely(form);
                     action = form.Action;
 
-                    if (action == TextColorDialogAction.Apply)
+                    // 「确定」与「① 在图纸中选择…」都会把面板上的当前选项带回来，
+                    // 去调色板/图上吸取这类动作不动选项，是 null。
+                    if (form.Options != null)
                     {
                         chosen = form.Options;
                     }
@@ -173,6 +149,23 @@ namespace ChemForge.Commands.Text.TextColor
                 {
                     CommandHost.WriteMessageNoDynPrompt(editor, "\n已取消，未做任何修改。");
                     return;
+                }
+
+                if (action == TextColorDialogAction.PickObjects)
+                {
+                    // 框选取消或空选时保留上一轮的选择，不清空。
+                    List<ObjectId> picked = PromptSelection(editor);
+                    if (picked.Count > 0)
+                    {
+                        targets = picked;
+                        LogSelection(targets);
+                    }
+                    else if (targets.Count == 0)
+                    {
+                        CommandHost.WriteMessageNoDynPrompt(editor, "\n没有框选到文字对象。");
+                    }
+
+                    continue;
                 }
 
                 if (action == TextColorDialogAction.PickColor)
@@ -192,6 +185,15 @@ namespace ChemForge.Commands.Text.TextColor
                         CommandHost.WriteMessageNoDynPrompt(editor, "\n未选取对象。");
                     }
 
+                    continue;
+                }
+
+                // 什么都没选就点了确定：面板再弹回来，别拿个空集合去跑引擎。
+                if (targets.Count == 0)
+                {
+                    CommandHost.WriteMessageNoDynPrompt(
+                        editor,
+                        "\n还没有选择文字：请点面板上的「① 在图纸中选择要改色的文字」。");
                     continue;
                 }
 
@@ -231,7 +233,23 @@ namespace ChemForge.Commands.Text.TextColor
             string report = result.Report;
 
             CommandHost.WriteMessageNoDynPrompt(editor, "\n" + report);
-            CommandHost.ShowAlertSafely(report);
+
+            // 命令行那份该说的都说了，但它字号小、刷得快，用户常常一眼没看见。
+            // 再弹一个 AutoCAD 原生提示框（与 BLKATTCHANGE 收尾那个同款），
+            // 内容只留结论：完整报告里那些样例、核对信息是留在命令行查问题用的，
+            // 全塞进提示框只会把"到底改了几个"淹掉。
+            string brief = TextColorReport.BuildBrief(result, chosen);
+            if (!CommandHost.ShowAlertSafely(brief))
+            {
+                // 原生提示框抛异常时（日志里会有 "ShowAlertDialog 失败"）兜底：
+                // 宁可换个样子弹，也别让用户什么都看不到 —— 这正是当初
+                // "点了确定，除了命令行什么都没有"的那次投诉。
+                using (TextColorResultForm resultForm = new TextColorResultForm(brief))
+                {
+                    CommandHost.ShowDialogSafely(resultForm);
+                }
+            }
+
             Logger.Info("命令 TCOLOR 完成：" + result.ChangedCount + " 个对象被改动。");
         }
 
@@ -291,26 +309,6 @@ namespace ChemForge.Commands.Text.TextColor
             return kept;
         }
 
-        private static List<ObjectId> SelectWholeDrawing(Editor editor)
-        {
-            try
-            {
-                SelectionFilter filter = new SelectionFilter(
-                    new[] { new TypedValue((int)DxfCode.Start, TextTypeFilter) });
-
-                PromptSelectionResult result = editor.SelectAll(filter);
-                if (result.Status == PromptStatus.OK && result.Value != null)
-                {
-                    return FilterTextObjects(new List<ObjectId>(result.Value.GetObjectIds()));
-                }
-            }
-            catch (System.Exception)
-            {
-            }
-
-            return new List<ObjectId>();
-        }
-
         /// <summary>
         /// 只留下文字类对象。
         ///
@@ -357,6 +355,15 @@ namespace ChemForge.Commands.Text.TextColor
             public int MText;
             public int Text;
             public int MultiLeader;
+        }
+
+        private static void LogSelection(List<ObjectId> targets)
+        {
+            TextTypeCounts counts = CountByType(targets);
+            Logger.Info(
+                "命令 TCOLOR 选中文字：多行文字 " + counts.MText
+                + " / 单行文字 " + counts.Text
+                + " / 多重引线 " + counts.MultiLeader + "。");
         }
 
         private static TextTypeCounts CountByType(IEnumerable<ObjectId> ids)

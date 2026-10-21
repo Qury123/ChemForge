@@ -2,6 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Windows.Forms;
 using Autodesk.AutoCAD.ApplicationServices;
+using ChemForge.Utilities;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using AcException = Autodesk.AutoCAD.Runtime.Exception;
 using Document = Autodesk.AutoCAD.ApplicationServices.Document;
@@ -405,24 +406,37 @@ namespace ChemForge.Commands.Common
             {
                 AcadApp.ShowModalDialog(form);
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
+                // 这里不能吞得无声无息：TCOLOR 当初"点了确定什么都不弹"，
+                // 命令行没提示、日志也一个字没有，只能靠猜。
+                Logger.Info("ShowModalDialog 失败：" + ex.Message);
             }
         }
 
         /// <summary>
-        /// 弹一个只带"确定"的提示框。同样必须独立成方法且禁止内联，
+        /// 弹一个只带"确定"的提示框 —— 就是 AutoCAD 自己的「AutoCAD 消息」窗口，
+        /// BLKATTCHANGE 收尾用的也是它。同样必须独立成方法且禁止内联，
         /// 理由见 <see cref="ShowDialogSafely"/>。
+        ///
+        /// 返回是否真的弹成了。本方法吞掉异常（调用方多半在命令收尾，
+        /// 不该因为一个提示框把整个命令判成失败），所以调用方想知道成败只能看返回值：
+        /// 返回 false 时日志里一定有 "ShowAlertDialog 失败"，调用方可以换个方式兜底。
         /// </summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
-        internal static void ShowAlertSafely(string message)
+        internal static bool ShowAlertSafely(string message)
         {
             try
             {
                 AcadApp.ShowAlertDialog(message);
+                return true;
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
+                // 这里不能吞得无声无息：命令行没提示、日志也一个字没有的话，
+                // “点了确定什么都没弹”就只能靠猜。
+                Logger.Info("ShowAlertDialog 失败：" + ex.Message);
+                return false;
             }
         }
     }

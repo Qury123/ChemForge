@@ -122,6 +122,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorReport.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\Text\TextColor\TextColorResult.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
+    <Compile Include="$(MSBuildThisFileDirectory)UI\Forms\Text\TextColor\TextColorResultForm.cs" Condition="'$(UseWindowsForms)' == 'true'" />
     <!-- 图层锁定判断：批量命令的公共闸门（先查后写，避免一个锁定图层对象把整批事务拖回滚）。
          被 Core\Block\Numbering\AttributeService、Core\Text\TextColor\TextColorApplier、
          Core\Block\BlockAttr\BatchAttrChangeWriter 三处共用，故不加 $(UseWindowsForms) 条件 -->
