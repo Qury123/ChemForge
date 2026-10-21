@@ -38,6 +38,10 @@ namespace ChemForge.Application
             { CommandNames.TextColor, "textcolor" },
             { CommandNames.BatchAttrChange, "batattchange" },
             { CommandNames.PipeBreak, "breakpipe" },
+            // 仪表线自动打断（INSTBREAK）：breakinst_*.png 是 breakpipe_*.png 沿对角线转置的
+            // 产物（十字本身对称，转置只是把红色缺口箭头从横线搬到竖线），一眼能看出
+            // 「被打断的是另一条线」，又与管线打断同属一套图标语言。
+            { CommandNames.InstrumentBreak, "breakinst" },
             // NumberInst（TAGNO）2026-10-14 随菜单项一并摘掉：图标资源 numberinst_*.png
             // 仍留在 UI\Resources\Icons 下，等业务实现后把这一行加回来即可。
             { CommandNames.ChemForge, "about" }

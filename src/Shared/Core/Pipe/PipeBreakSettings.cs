@@ -8,7 +8,8 @@ using ChemForge.Utilities;
 namespace ChemForge.Core.Pipe
 {
     /// <summary>
-    /// PIPEBREAK 的跨图纸记忆：上次的缺口/架桥总宽度、上次点选过的管线图层。
+    /// PIPEBREAK / INSTBREAK 的跨图纸记忆：上次的缺口/架桥总宽度、上次点选过的管线图层、
+    /// 上次点选过的仪表线图层（INSTBREAK 专用）。宽度与管线图层由两条命令共用。
     ///
     /// 历史做法是把这两项塞进 AutoCAD 系统变量 USERR1 / USERS1。问题在于这两个变量属于
     /// <b>图纸</b>而不属于用户：值随 DWG 一起保存，换一张图记忆就变了；而且为了记住插件
@@ -24,6 +25,7 @@ namespace ChemForge.Core.Pipe
         private const string FileName = "PipeBreak.settings";
         private const string WidthKey = "LastWidth";
         private const string LayerKey = "LastPipeLayer";
+        private const string InstrumentLayerKey = "LastInstrumentLayer";
 
         /// <summary>读取上次的总宽度；没存过或读不出来时返回 <paramref name="fallback"/>。</summary>
         public static double GetLastWidth(double fallback)
@@ -69,6 +71,28 @@ namespace ChemForge.Core.Pipe
             }
 
             Save(LayerKey, layerName);
+        }
+
+        /// <summary>读取上次的仪表线图层名（INSTBREAK）；没存过时返回 null（调用方据此改为提示用户点选）。</summary>
+        public static string GetLastInstrumentLayer()
+        {
+            string raw;
+            if (!Load().TryGetValue(InstrumentLayerKey, out raw))
+            {
+                return null;
+            }
+
+            return string.IsNullOrEmpty(raw) ? null : raw;
+        }
+
+        public static void SetLastInstrumentLayer(string layerName)
+        {
+            if (string.IsNullOrEmpty(layerName))
+            {
+                return;
+            }
+
+            Save(InstrumentLayerKey, layerName);
         }
 
         /// <summary>
@@ -128,7 +152,7 @@ namespace ChemForge.Core.Pipe
                     Directory.CreateDirectory(directory);
                 }
 
-                var lines = new List<string> { "# ChemForge PIPEBREAK 命令的跨图纸记忆，可安全删除。" };
+                var lines = new List<string> { "# ChemForge PIPEBREAK / INSTBREAK 命令的跨图纸记忆，可安全删除。" };
                 foreach (KeyValuePair<string, string> pair in map)
                 {
                     lines.Add(pair.Key + "=" + pair.Value);

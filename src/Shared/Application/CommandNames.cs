@@ -30,6 +30,9 @@ namespace ChemForge.Application
         /// <summary>管线自动打断（缺口 / 半圆架桥）</summary>
         public const string PipeBreak = "PIPEBREAK";
 
+        /// <summary>仪表线自动打断（仪表线 × 管线，固定打断仪表线）</summary>
+        public const string InstrumentBreak = "INSTBREAK";
+
         /// <summary>仪表块自动编号</summary>
         public const string NumberInst = "TAGNO";
 

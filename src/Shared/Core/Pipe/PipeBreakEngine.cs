@@ -14,7 +14,12 @@ namespace ChemForge.Core.Pipe
 {
     /// <summary>
     /// 管线交叉缺口打断 / 半圆架桥引擎
-    /// 命令: PIPEBREAK（ChemForge 菜单/功能区宏）
+    /// 命令: PIPEBREAK（管线 × 管线，避让侧由「缺口方向」决定）
+    /// 命令: INSTBREAK（仪表线 × 管线，避让侧固定为仪表线，跨图层配对）
+    ///
+    /// 两条命令共用同一套几何处理：交互段各自提问，处理段统一走 <see cref="RunCore"/>。
+    /// 单图层模式（PIPEBREAK）保持原有行为不变：同向管线不配对，避让侧按方向选取。
+    /// 双图层模式（INSTBREAK）只做跨图层配对，避让侧恒为「仪表线图层」那一侧。
     ///
     /// 本引擎随 ChemForge 主插件一并编译进 Net48 / Net80 目标。
     /// 实现要点：CommandMethod 挂载为静态入口（实例方法不会被 AutoCAD 注册），
@@ -41,6 +46,8 @@ namespace ChemForge.Core.Pipe
             public ObjectId Id;
             public Curve Curve;
             public bool IsVertical;
+            /// <summary>双图层模式下的分组：0 = 被打断（避让）侧，1 = 另一侧；单图层模式不使用</summary>
+            public int Group;
             public double MinX, MinY, MaxX, MaxY;
             public Point3d[] Nodes;            // Line:2 点；Polyline:全部顶点（缓存，避免逐次 P/Invoke）
             public bool ConstZ;                // Z 是否恒定（水平面内管线）
@@ -82,9 +89,46 @@ namespace ChemForge.Core.Pipe
             public bool ApplyPlotStyle;
         }
 
-        // ==================== 命令主体（由 Commands/Pipe/PipeBreakCommand 调用） ====================
+        // ==================== 命令主体（由 Commands/Pipe/*Command 调用） ====================
 
-        /// <summary>执行管线自动打断主流程（单人单事务，Esc 可整体回滚）</summary>
+        /// <summary>一次打断请求的全部参数：交互段填好，处理段不再提问</summary>
+        private sealed class BreakRequest
+        {
+            public double TotalWidth;
+            public bool BridgeMode;
+            public Vector3d SideVector = new Vector3d(0, 1, 0);
+
+            /// <summary>被打断（避让）侧所在图层；为 null 表示单图层模式</summary>
+            public string AvoidLayer;
+
+            /// <summary>另一侧图层；单图层模式下为 null</summary>
+            public string OtherLayer;
+
+            /// <summary>单图层模式：true = 打断垂直线（即原「缺口方向 垂直(V)」）</summary>
+            public bool BreakVertical = true;
+
+            /// <summary>日志用的命令名</summary>
+            public string CommandName = "PIPEBREAK";
+
+            /// <summary>被打断侧的称呼（管线 / 仪表线），仅用于提示文字</summary>
+            public string AvoidLabel = "管线";
+
+            /// <summary>双图层模式：只做跨图层配对，避让侧恒为 <see cref="AvoidLayer"/></summary>
+            public bool TwoLayer;
+        }
+
+        /// <summary>图层点选结果</summary>
+        private enum LayerPick
+        {
+            /// <summary>已确定图层</summary>
+            Ok,
+            /// <summary>用户按 Esc 取消</summary>
+            Cancelled,
+            /// <summary>既没点选也没有上次记忆</summary>
+            Failed
+        }
+
+        /// <summary>执行管线自动打断主流程（PIPEBREAK，单人单事务，Esc 可整体回滚）</summary>
         public static void Execute()
         {
             Document doc = AcApp.DocumentManager.MdiActiveDocument;
@@ -150,27 +194,12 @@ namespace ChemForge.Core.Pipe
             }
 
             // 3.9 指定管线所在图层（记忆上次选择，与宽度记忆共用同一份插件配置文件）
-            string pipeLayer = PipeBreakSettings.GetLastLayer();
-
-            var peo = new PromptEntityOptions("\n请点选一条管线以确定管线图层（回车使用上次图层）: ");
-            peo.AllowNone = true;
-            peo.SetRejectMessage("请选择 Line 或二维 Polyline。");
-            peo.AddAllowedClass(typeof(Line), true);
-            peo.AddAllowedClass(typeof(Polyline), true);
-            PromptEntityResult per = ed.GetEntity(peo);
-            if (per.Status == PromptStatus.Cancel) return;
-            if (per.Status == PromptStatus.OK)
-            {
-                using (Transaction trLayer = db.TransactionManager.StartTransaction())
-                {
-                    Entity e = trLayer.GetObject(per.ObjectId, OpenMode.ForRead) as Entity;
-                    pipeLayer = e != null ? e.Layer : null;
-                    trLayer.Commit();
-                }
-                if (!string.IsNullOrEmpty(pipeLayer))
-                    PipeBreakSettings.SetLastLayer(pipeLayer);
-            }
-            if (string.IsNullOrEmpty(pipeLayer))
+            string pipeLayer;
+            LayerPick pick = PromptLayer(ed, db,
+                "\n请点选一条管线以确定管线图层（回车使用上次图层）: ",
+                PipeBreakSettings.GetLastLayer(), PipeBreakSettings.SetLastLayer, out pipeLayer);
+            if (pick == LayerPick.Cancelled) return;
+            if (pick == LayerPick.Failed)
             {
                 ed.WriteMessage("\n无法确定管线图层。");
                 return;
@@ -187,37 +216,243 @@ namespace ChemForge.Core.Pipe
             pso.MessageForAdding = "选择管线（Line/二维Polyline）";
             PromptSelectionResult psr = ed.GetSelection(pso, filter);
             if (psr.Status != PromptStatus.OK) return;
-            ObjectId[] selectedIds = psr.Value.GetObjectIds();
 
-            // 5. 在事务内完成全部处理（可整体 Undo）
+            // 5. 处理（单图层模式：避让侧仍由「缺口方向」决定，行为与改造前一致）
+            RunCore(doc, sw, new BreakRequest
+            {
+                TotalWidth = totalWidth,
+                BridgeMode = bridgeMode,
+                SideVector = sideVector,
+                BreakVertical = breakVertical,
+                AvoidLayer = pipeLayer,
+                OtherLayer = null,
+                TwoLayer = false,
+                CommandName = "PIPEBREAK",
+                AvoidLabel = "管线"
+            }, psr.Value.GetObjectIds());
+        }
+
+        /// <summary>
+        /// 执行仪表线自动打断主流程（INSTBREAK，单人单事务，Esc 可整体回滚）
+        ///
+        /// 与 PIPEBREAK 的差异：
+        ///   1. 图层点选两次：先仪表线图层、再管线图层（各自记忆上次选择）；
+        ///   2. 不再询问「缺口方向」——避让侧固定为仪表线，即仪表线让管线；
+        ///   3. 框选一次即可：过滤器同时接受两个图层，程序按图层分组配对；
+        ///   4. 只处理跨图层交叉；同层交叉（仪表线×仪表线、管线×管线）不打断，
+        ///      管线×管线仍交给 PIPEBREAK。
+        /// </summary>
+        public static void ExecuteInstrument()
+        {
+            Document doc = AcApp.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                Logger.Warning("命令 INSTBREAK 被调用时没有打开的图形（MdiActiveDocument 为 null），已忽略。");
+                return;
+            }
+
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+            System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+
+            // 1. 读取上次保存的总宽度（与 PIPEBREAK 共用同一记忆值）
+            double lastWidth = PipeBreakSettings.GetLastWidth(1000.0);
+
+            // 2. 输入宽度
+            var pdo = new PromptDoubleOptions("\n请输入缺口/架桥总宽度(mm): ");
+            pdo.DefaultValue = lastWidth;
+            pdo.AllowNone = false;
+            PromptDoubleResult pdr = ed.GetDouble(pdo);
+            if (pdr.Status != PromptStatus.OK) return;
+            double totalWidth = pdr.Value;
+            PipeBreakSettings.SetLastWidth(totalWidth);
+
+            // 3. 选择模式
+            var pko = new PromptKeywordOptions("\n选择模式 [缺口(D)/架桥(H)]: ");
+            pko.Keywords.Add("D");
+            pko.Keywords.Add("H");
+            pko.Keywords.Default = "D";
+            PromptResult pkr = ed.GetKeywords(pko);
+            if (pkr.Status != PromptStatus.OK) return;
+            bool bridgeMode = pkr.StringResult == "H";
+
+            // 4. 架桥模式：半圆凸起方向（四种半圆形式）
+            Vector3d sideVector = new Vector3d(0, 1, 0); // 默认上方 U
+            if (bridgeMode)
+            {
+                var pkoB = new PromptKeywordOptions("\n架桥半圆凸起方向 [上方(U)/下方(D)/左(L)/右(R)]: ");
+                pkoB.Keywords.Add("U");
+                pkoB.Keywords.Add("D");
+                pkoB.Keywords.Add("L");
+                pkoB.Keywords.Add("R");
+                pkoB.Keywords.Default = "U";
+                PromptResult pkrB = ed.GetKeywords(pkoB);
+                if (pkrB.Status != PromptStatus.OK) return;
+                switch (pkrB.StringResult)
+                {
+                    case "D": sideVector = new Vector3d(0, -1, 0); break;
+                    case "L": sideVector = new Vector3d(-1, 0, 0); break;
+                    case "R": sideVector = new Vector3d(1, 0, 0); break;
+                    default: sideVector = new Vector3d(0, 1, 0); break;
+                }
+            }
+
+            // 5. 指定仪表线图层（被打断的一侧）
+            string instrLayer;
+            LayerPick pickInstr = PromptLayer(ed, db,
+                "\n请点选一条仪表线以确定仪表线图层（回车使用上次图层）: ",
+                PipeBreakSettings.GetLastInstrumentLayer(), PipeBreakSettings.SetLastInstrumentLayer,
+                out instrLayer);
+            if (pickInstr == LayerPick.Cancelled) return;
+            if (pickInstr == LayerPick.Failed)
+            {
+                ed.WriteMessage("\n无法确定仪表线图层。");
+                return;
+            }
+            ed.WriteMessage("\n仪表线图层: " + instrLayer);
+
+            // 6. 指定管线图层（不被打断的一侧）
+            string pipeLayer;
+            LayerPick pickPipe = PromptLayer(ed, db,
+                "\n请点选一条管线以确定管线图层（回车使用上次图层）: ",
+                PipeBreakSettings.GetLastLayer(), PipeBreakSettings.SetLastLayer, out pipeLayer);
+            if (pickPipe == LayerPick.Cancelled) return;
+            if (pickPipe == LayerPick.Failed)
+            {
+                ed.WriteMessage("\n无法确定管线图层。");
+                return;
+            }
+            ed.WriteMessage("\n管线图层: " + pipeLayer);
+
+            if (string.Equals(instrLayer, pipeLayer, StringComparison.OrdinalIgnoreCase))
+            {
+                ed.WriteMessage("\n仪表线图层与管线图层相同（" + instrLayer +
+                                "），无法区分让位关系，命令已取消。");
+                return;
+            }
+
+            // 7. 框选：一次框选两个图层（<OR> 过滤器同时接受仪表线与管线），避免把整张图带进来
+            var filter = new SelectionFilter(new[]
+            {
+                new TypedValue(0, "LINE,LWPOLYLINE"),
+                new TypedValue(-4, "<OR"),
+                new TypedValue(8, instrLayer),
+                new TypedValue(8, pipeLayer),
+                new TypedValue(-4, "OR>")
+            });
+            var pso = new PromptSelectionOptions();
+            pso.MessageForAdding = "选择仪表线与管线（Line/二维Polyline）";
+            PromptSelectionResult psr = ed.GetSelection(pso, filter);
+            if (psr.Status != PromptStatus.OK) return;
+
+            // 8. 处理（双图层模式：避让侧恒为仪表线）
+            RunCore(doc, sw, new BreakRequest
+            {
+                TotalWidth = totalWidth,
+                BridgeMode = bridgeMode,
+                SideVector = sideVector,
+                AvoidLayer = instrLayer,
+                OtherLayer = pipeLayer,
+                TwoLayer = true,
+                CommandName = "INSTBREAK",
+                AvoidLabel = "仪表线"
+            }, psr.Value.GetObjectIds());
+        }
+
+        /// <summary>
+        /// 点选一条线以确定图层；回车（AllowNone）沿用上次记忆。
+        /// <paramref name="persist"/> 非空时把点选结果写进跨图纸记忆。
+        /// </summary>
+        private static LayerPick PromptLayer(Editor ed, Database db, string message,
+                                             string lastLayer, Action<string> persist,
+                                             out string layer)
+        {
+            layer = lastLayer;
+
+            var peo = new PromptEntityOptions(message);
+            peo.AllowNone = true;
+            peo.SetRejectMessage("请选择 Line 或二维 Polyline。");
+            peo.AddAllowedClass(typeof(Line), true);
+            peo.AddAllowedClass(typeof(Polyline), true);
+            PromptEntityResult per = ed.GetEntity(peo);
+            if (per.Status == PromptStatus.Cancel) return LayerPick.Cancelled;
+            if (per.Status == PromptStatus.OK)
+            {
+                using (Transaction trLayer = db.TransactionManager.StartTransaction())
+                {
+                    Entity e = trLayer.GetObject(per.ObjectId, OpenMode.ForRead) as Entity;
+                    layer = e != null ? e.Layer : null;
+                    trLayer.Commit();
+                }
+                if (!string.IsNullOrEmpty(layer) && persist != null)
+                    persist(layer);
+            }
+
+            return string.IsNullOrEmpty(layer) ? LayerPick.Failed : LayerPick.Ok;
+        }
+
+        /// <summary>处理段：框选结果 → 求交 → 分割/架桥（单人单事务，Esc 可整体回滚）</summary>
+        private static void RunCore(Document doc, System.Diagnostics.Stopwatch sw,
+                                    BreakRequest req, ObjectId[] selectedIds)
+        {
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+            bool twoLayer = req.TwoLayer;
+            // 提示文字里的「线」的统称：单图层模式沿用改造前的措辞（管线），双图层模式泛指两侧曲线
+            string lineWord = twoLayer ? "曲线" : "管线";
+            Logger.Info("命令 " + req.CommandName + " 进入处理段：宽度=" + req.TotalWidth +
+                        "，模式=" + (req.BridgeMode ? "架桥" : "缺口") +
+                        "，图层模式=" + (twoLayer ? "双图层（避让侧固定为 " + req.AvoidLabel + "）" : "单图层"));
+
+            // 在事务内完成全部处理（可整体 Undo）
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 // 模型空间 Id 只查一次（v1 每个实体都开一次块表）
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 ObjectId msId = bt[BlockTableRecord.ModelSpace];
 
-                // 阶段0：一次性打开全部管线并缓存几何信息
-                List<PipeInfo> pipes = BuildPipeInfos(tr, selectedIds, pipeLayer, msId,
+                // 阶段0：一次性打开全部图元并缓存几何信息（双图层模式下同时打好分组标记）
+                List<PipeInfo> pipes = BuildPipeInfos(tr, selectedIds, req.AvoidLayer, req.OtherLayer, msId,
                                                       out int skipType, out int skipLayer,
                                                       out int skipLocked, out int skipSpace);
                 if (skipType + skipLayer + skipLocked + skipSpace > 0)
-                    ed.WriteMessage("\n[过滤汇总] 类型不符 " + skipType + "，非管线图层 " + skipLayer +
+                    ed.WriteMessage("\n[过滤汇总] 类型不符 " + skipType + "，" +
+                                    (twoLayer ? "非目标图层 " : "非管线图层 ") + skipLayer +
                                     "，图层冻结/锁定 " + skipLocked + "，非模型空间 " + skipSpace);
 
                 if (pipes.Count < 2)
                 {
-                    ed.WriteMessage("\n有效管线数量不足。");
+                    ed.WriteMessage(twoLayer ? "\n有效图元数量不足。" : "\n有效管线数量不足。");
                     return;
                 }
-                ed.WriteMessage("\n有效管线: " + pipes.Count + " 条");
 
-                // 阶段1：按方向分组 + 均匀网格空间索引求交
+                if (twoLayer)
+                {
+                    int avoidCount = 0, otherCount = 0;
+                    foreach (PipeInfo p in pipes)
+                    {
+                        if (p.Group == 0) avoidCount++; else otherCount++;
+                    }
+                    ed.WriteMessage("\n有效" + req.AvoidLabel + ": " + avoidCount +
+                                    " 条，管线: " + otherCount + " 条");
+                    if (avoidCount == 0 || otherCount == 0)
+                    {
+                        ed.WriteMessage("\n" + req.AvoidLabel + "与管线必须各选到至少一条，没有可处理的交叉。");
+                        return;
+                    }
+                }
+                else
+                {
+                    ed.WriteMessage("\n有效管线: " + pipes.Count + " 条");
+                }
+
+                // 阶段1：分组配对 + 均匀网格空间索引求交
                 List<BreakRecord> records = new List<BreakRecord>();
                 int validIntersectionCount = 0;
                 SkipStats skip = new SkipStats();
                 long testedPairs = 0;
 
-                CollectIntersections(pipes, totalWidth, breakVertical, records,
+                CollectIntersections(pipes, req, records,
                                      ref validIntersectionCount, ref skip, ref testedPairs);
 
                 long bruteForce = (long)pipes.Count * (pipes.Count - 1) / 2;
@@ -229,17 +464,34 @@ namespace ChemForge.Core.Pipe
                     // 分类明细：让用户知道每一个跳过原因，而不是笼统的"跳过 N"
                     var reasons = new System.Collections.Generic.List<string>();
                     if (skip.ZMismatch > 0) reasons.Add("高程(Z)不一致 " + skip.ZMismatch);
-                    if (skip.EndpointTouch > 0) reasons.Add("交点位于管端点 " + skip.EndpointTouch);
-                    if (skip.OffCurve > 0) reasons.Add("交点未投影到避让管线 " + skip.OffCurve);
+                    if (skip.EndpointTouch > 0) reasons.Add("交点与" + lineWord + "端点重合 " + skip.EndpointTouch);
+                    if (skip.EndpointNearMiss > 0) reasons.Add("交点贴近" + lineWord + "端点(没接准) " + skip.EndpointNearMiss);
+                    if (skip.OffCurve > 0) reasons.Add("交点未投影到避让" + req.AvoidLabel + " " + skip.OffCurve);
                     if (skip.SplitFail > 0) reasons.Add("缺口间距不足/分割失败 " + skip.SplitFail);
-                    if (skip.SplitNearNode > 0) reasons.Add("分割点贴近管端点 " + skip.SplitNearNode);
+                    if (skip.SplitNearNode > 0) reasons.Add("分割点贴近" + lineWord + "端点 " + skip.SplitNearNode);
                     ed.WriteMessage("\n[跳过明细] " + string.Join("，", reasons));
 
                     // 面向经验最丰富场景给出明确建议：间距太短
                     if (skip.SplitFail > 0)
-                        ed.WriteMessage("\n提示：缺口总宽度为 " + totalWidth + "，交叉点距管线端点需大于 " +
-                                        (totalWidth / 2.0).ToString("0.###") +
-                                        "（半宽）。若交叉点贴近端点或管线过短，将无法打断——请增大宽度或调整管线位置。");
+                        ed.WriteMessage("\n提示：缺口总宽度为 " + req.TotalWidth + "，交叉点距" + lineWord +
+                                        "端点需大于 " + (req.TotalWidth / 2.0).ToString("0.###") +
+                                        "（半宽）。若交叉点贴近端点或" + lineWord +
+                                        "过短，将无法打断——请增大宽度或调整" + lineWord + "位置。");
+
+                    // 「端点没接准」单独点名报出：这属于画图问题，用户需要知道具体是哪两条线、差多少
+                    if (skip.EndpointNearMiss > 0)
+                    {
+                        ed.WriteMessage("\n[端点没接准] " + skip.EndpointNearMiss + " 处交点落在" + lineWord +
+                                        "的端点/顶点附近 —— 两条" + lineWord +
+                                        "只是端接（T 型），并没有真正交叉，已按端接处理、未打断：");
+                        foreach (string note in skip.NearMissDetail)
+                            ed.WriteMessage("\n  · " + note);
+                        if (skip.EndpointNearMiss > skip.NearMissDetail.Count)
+                            ed.WriteMessage("\n  · ...（其余 " +
+                                            (skip.EndpointNearMiss - skip.NearMissDetail.Count) + " 处从略）");
+                        ed.WriteMessage("\n  提示：这属于画图问题 —— 端点应精确捕捉到另一条" + lineWord +
+                                        "上；若确实要交叉，请把" + lineWord + "画过交叉点再打断。");
+                    }
                 }
 
                 if (records.Count == 0)
@@ -252,8 +504,7 @@ namespace ChemForge.Core.Pipe
                 BlockTableRecord modelSpace =
                     (BlockTableRecord)tr.GetObject(msId, OpenMode.ForWrite);
 
-                int successCount = ProcessGroups(tr, pipes, records, modelSpace, ed,
-                                                 bridgeMode, sideVector);
+                int successCount = ProcessGroups(tr, pipes, records, modelSpace, ed, req);
 
                 ed.WriteMessage("\n成功处理数量: " + successCount + "，耗时 " + sw.ElapsedMilliseconds + " ms");
                 tr.Commit();
@@ -263,11 +514,13 @@ namespace ChemForge.Core.Pipe
         // ==================== 阶段0：管线缓存 ====================
 
         private static List<PipeInfo> BuildPipeInfos(Transaction tr, ObjectId[] ids,
-                                                     string pipeLayer, ObjectId msId,
+                                                     string avoidLayer, string otherLayer,
+                                                     ObjectId msId,
                                                      out int skipType, out int skipLayer,
                                                      out int skipLocked, out int skipSpace)
         {
             skipType = skipLayer = skipLocked = skipSpace = 0;
+            bool twoLayer = otherLayer != null;
             var pipes = new List<PipeInfo>(ids.Length);
             // 图层状态缓存：v1 对每个实体都开一次 LayerTableRecord
             var lockedLayers = new Dictionary<ObjectId, bool>();
@@ -277,7 +530,19 @@ namespace ChemForge.Core.Pipe
                 Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
                 if (ent == null) { skipType++; continue; }
                 if (!(ent is Line) && !(ent is Polyline)) { skipType++; continue; }
-                if (!string.Equals(ent.Layer, pipeLayer, System.StringComparison.OrdinalIgnoreCase))
+
+                // 双图层模式：避让侧（仪表线）记 0，另一侧（管线）记 1；
+                // 单图层模式：一律记 0，避让侧留到求交时按方向决定。
+                int group;
+                if (string.Equals(ent.Layer, avoidLayer, StringComparison.OrdinalIgnoreCase))
+                {
+                    group = 0;
+                }
+                else if (twoLayer && string.Equals(ent.Layer, otherLayer, StringComparison.OrdinalIgnoreCase))
+                {
+                    group = 1;
+                }
+                else
                 {
                     skipLayer++;
                     continue;
@@ -298,7 +563,7 @@ namespace ChemForge.Core.Pipe
                 Curve cv = ent as Curve;
                 if (cv == null) { skipType++; continue; }
 
-                var info = new PipeInfo { Id = id, Curve = cv };
+                var info = new PipeInfo { Id = id, Curve = cv, Group = group };
                 try
                 {
                     Extents3d ext = cv.GeometricExtents;
@@ -347,37 +612,73 @@ namespace ChemForge.Core.Pipe
             return true;
         }
 
+        /// <summary>「端点没接准」明细最多报几条（其余只报总数，避免刷屏）</summary>
+        private const int MaxNearMissDetail = 5;
+
         /// <summary>跳过原因分类统计（用于给用户明确的诊断提示，而非笼统的"跳过 N"）</summary>
         private sealed class SkipStats
         {
             public int ZMismatch;        // 两管线高程（Z）不一致
-            public int EndpointTouch;    // 交点位于管线端点/顶点
+            public int EndpointTouch;    // 交点与管线端点/顶点重合
+            public int EndpointNearMiss; // 交点落在管线端点/顶点附近但没接准（画图问题，按端接处理）
             public int OffCurve;         // 交点投影不在避让管线上
             public int SplitFail;        // 分割点求取失败（间距不足/弧长接口异常等）
             public int SplitNearNode;    // 分割点贴近管线端点
 
-            public int Total { get { return ZMismatch + EndpointTouch + OffCurve + SplitFail + SplitNearNode; } }
+            /// <summary>「端点没接准」的明细（只留前若干条，避免刷屏）</summary>
+            public readonly List<string> NearMissDetail = new List<string>();
+
+            public int Total
+            {
+                get
+                {
+                    return ZMismatch + EndpointTouch + EndpointNearMiss +
+                           OffCurve + SplitFail + SplitNearNode;
+                }
+            }
         }
 
         // ==================== 阶段1：空间索引求交 ====================
 
-        private static void CollectIntersections(List<PipeInfo> pipes, double totalWidth,
-                                                 bool breakVertical, List<BreakRecord> records,
+        private static void CollectIntersections(List<PipeInfo> pipes, BreakRequest req,
+                                                 List<BreakRecord> records,
                                                  ref int validCount, ref SkipStats skip,
                                                  ref long testedPairs)
         {
             if (skip == null) skip = new SkipStats();
             int n = pipes.Count;
-            double half = totalWidth / 2.0;
-            double tol = Tolerance.Global.EqualPoint * 2;
+            double half = req.TotalWidth / 2.0;
+            // 端点「重合」容差：原实现是 Tolerance.Global.EqualPoint * 2 = 2e-10，
+            // 那是 AutoCAD 判定"同一个点"的量级。大坐标图纸里双精度噪声本身就能超过它，
+            // 于是"端点明明接在管线上"也判不出来 → 被当成交叉打断。
+            // 改用 1e-6：仍远小于任何肉眼可见的误差，却比浮点噪声大好几个数量级。
+            double tol = 1e-6;
             double tolSq = tol * tol;
+            // 端点「没接准」容差：交点落在缺口范围内（半宽）时，另一条管线只是"接"在
+            // 避让管线上（T 型/端接），并没有真正穿过去 —— 打断会把接好的连接挖出缺口。
+            // 这种情况按端接处理（不打断），并单独报出明细，提示这是画图问题。
+            double nodeTolSq = half * half;
+            // 提示文字里的「线」的统称（与 RunCore 保持一致）
+            string lineWord = req.TwoLayer ? "曲线" : "管线";
 
-            // 方向分组：同向管线不产生缺口交叉，天然省掉一半以上的组合
-            var verts = new List<int>();
-            var hors = new List<int>();
+            // 配对分组：
+            //   单图层模式（PIPEBREAK）—— 按方向分组，同向管线不产生缺口交叉，天然省掉一半以上的组合；
+            //   双图层模式（INSTBREAK）—— 按图层分组，只做跨图层配对，
+            //   同层交叉（仪表线×仪表线、管线×管线）不处理。
+            // 约定：probes 为「查询侧」，双图层模式下恒为避让侧（仪表线）；
+            //       indexed 为「建索引侧」，双图层模式下恒为另一侧（管线）。两组互斥。
+            var probes = new List<int>();
+            var indexed = new List<int>();
             for (int i = 0; i < n; i++)
             {
-                if (pipes[i].IsVertical) verts.Add(i); else hors.Add(i);
+                if (req.TwoLayer)
+                {
+                    if (pipes[i].Group == 0) probes.Add(i); else indexed.Add(i);
+                }
+                else
+                {
+                    if (pipes[i].IsVertical) probes.Add(i); else indexed.Add(i);
+                }
             }
 
             // 全局包围盒（用于确定网格尺寸）
@@ -391,12 +692,12 @@ namespace ChemForge.Core.Pipe
                 if (p.MaxY > gMaxY) gMaxY = p.MaxY;
             }
 
-            // 只对「水平管线」建网格索引，用「垂直管线」去查询
+            // 只对「另一侧」建网格索引，用「避让侧」去查询
             var cells = new Dictionary<int, List<int>>();
             var bigOnes = new List<int>();
             int nx, ny;
             double cellW, cellH;
-            BuildGrid(pipes, hors, gMinX, gMinY, gMaxX, gMaxY,
+            BuildGrid(pipes, indexed, gMinX, gMinY, gMaxX, gMaxY,
                       cells, bigOnes, out nx, out ny, out cellW, out cellH);
 
             var cand = new List<int>(64);
@@ -405,9 +706,9 @@ namespace ChemForge.Core.Pipe
             int tick = 0;
             long pairs = 0;
 
-            for (int vi = 0; vi < verts.Count; vi++)
+            for (int vi = 0; vi < probes.Count; vi++)
             {
-                int viIdx = verts[vi];
+                int viIdx = probes[vi];
                 PipeInfo vp = pipes[viIdx];
 
                 cand.Clear();
@@ -432,10 +733,12 @@ namespace ChemForge.Core.Pipe
                     }
                     if (pts.Count == 0) continue;
 
-                    // 按用户选择确定避让（被打断）管线
-                    int avoidIdx = breakVertical ? viIdx : hiIdx;
+                    // 确定避让（被打断）管线：
+                    //   双图层模式 —— 恒为查询侧的仪表线（仪表线让管线）；
+                    //   单图层模式 —— 按「缺口方向」选择垂直或水平一侧。
+                    int avoidIdx = (req.TwoLayer || req.BreakVertical) ? viIdx : hiIdx;
                     PipeInfo avoid = pipes[avoidIdx];
-                    PipeInfo other = breakVertical ? hp : vp;
+                    PipeInfo other = avoidIdx == viIdx ? hp : vp;
 
                     bool zChecked = avoid.ConstZ && other.ConstZ;
                     double zDiff = zChecked ? Math.Abs(avoid.Z - other.Z) : 0.0;
@@ -477,6 +780,27 @@ namespace ChemForge.Core.Pipe
                                 skip.ZMismatch++;
                                 continue;
                             }
+                        }
+
+                        // 端接判定（第二档）：**另一条**管线的端点落在缺口范围内 —— 它只是"接"在
+                        // 避让管线上（T 型端接），并没有真正穿过去。打断会在接点处挖出缺口、
+                        // 把本来接好的连接断开，所以按端接处理并记下明细。
+                        // 只查「另一条」：避让管线自己的端头贴近交点属于"端头太短"，
+                        // 仍走下面的 TryGetSplitPoints 失败分支，提示语才是对的。
+                        Point3d nearNode;
+                        double nearDist;
+                        PipeInfo nearPipe = FindNearNode(other, pt, nodeTolSq, out nearNode, out nearDist);
+                        if (nearPipe != null)
+                        {
+                            skip.EndpointNearMiss++;
+                            if (skip.NearMissDetail.Count < MaxNearMissDetail)
+                            {
+                                skip.NearMissDetail.Add("交点 (" + pt.X.ToString("0.###") + ", " +
+                                    pt.Y.ToString("0.###") + ")：图层 " + nearPipe.Curve.Layer +
+                                    " 的" + lineWord + "端点/顶点 (" + nearNode.X.ToString("0.###") + ", " +
+                                    nearNode.Y.ToString("0.###") + ") 偏离 " + nearDist.ToString("0.###"));
+                            }
+                            continue;
                         }
 
                         Point3d splitA, splitB;
@@ -570,7 +894,8 @@ namespace ChemForge.Core.Pipe
                                               Dictionary<int, List<int>> cells, List<int> bigOnes,
                                               int[] stamp, int tick)
         {
-            // 注意：网格里只放了水平管线，查询方是垂直管线，两组互斥，故无需 j>i 去重
+            // 注意：网格里只放了「另一侧」（单图层模式为水平管线），查询方是「避让侧」
+            // （单图层模式为垂直管线），两组互斥，故无需 j>i 去重
             int ix0 = Clamp((int)Math.Floor((q.MinX - minX) / cellW), 0, nx - 1);
             int ix1 = Clamp((int)Math.Floor((q.MaxX - minX) / cellW), 0, nx - 1);
             int iy0 = Clamp((int)Math.Floor((q.MinY - minY) / cellH), 0, ny - 1);
@@ -628,6 +953,33 @@ namespace ChemForge.Core.Pipe
             for (int i = 0; i < nodes.Length; i++)
                 if (DistSq(nodes[i], pt) < tolSq) return true;
             return false;
+        }
+
+        /// <summary>
+        /// 找出距交点 &lt; 容差的最近端点/顶点：命中时返回所属管线，并输出该顶点坐标与偏差距离，
+        /// 未命中返回 null。IsNearNode 只回答「是不是」，这里要连偏差一起报给用户看，所以单独一个方法。
+        /// </summary>
+        private static PipeInfo FindNearNode(PipeInfo p, Point3d pt, double tolSq,
+                                             out Point3d node, out double dist)
+        {
+            node = Point3d.Origin;
+            dist = 0.0;
+
+            Point3d[] nodes = p.Nodes;
+            if (nodes == null) return null;
+
+            double best = double.MaxValue;
+            Point3d bestNode = Point3d.Origin;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                double d = DistSq(nodes[i], pt);
+                if (d < best) { best = d; bestNode = nodes[i]; }
+            }
+            if (best >= tolSq) return null;
+
+            node = bestNode;
+            dist = Math.Sqrt(best);
+            return p;
         }
 
         /// <summary>
@@ -712,7 +1064,7 @@ namespace ChemForge.Core.Pipe
 
         private static int ProcessGroups(Transaction tr, List<PipeInfo> pipes,
                                          List<BreakRecord> records, BlockTableRecord modelSpace,
-                                         Editor ed, bool bridgeMode, Vector3d sideVector)
+                                         Editor ed, BreakRequest req)
         {
             // 线性分组：先按 AvoidIndex 排序再切段（v1 用 GroupBy，多一次哈希开销）
             records.Sort(CompareByAvoidIndex);
@@ -725,7 +1077,7 @@ namespace ChemForge.Core.Pipe
                 int j = i + 1;
                 while (j < records.Count && records[j].AvoidIndex == avoidIndex) j++;
                 success += ProcessOnePipe(tr, pipes[avoidIndex], records, i, j - i,
-                                          modelSpace, ed, bridgeMode, sideVector);
+                                          modelSpace, ed, req);
                 i = j;
             }
             return success;
@@ -738,7 +1090,7 @@ namespace ChemForge.Core.Pipe
 
         private static int ProcessOnePipe(Transaction tr, PipeInfo pipe, List<BreakRecord> recs,
                                           int start, int count, BlockTableRecord modelSpace,
-                                          Editor ed, bool bridgeMode, Vector3d sideVector)
+                                          Editor ed, BreakRequest req)
         {
             Curve curve = pipe.Curve;
             if (curve == null) return 0;
@@ -791,7 +1143,7 @@ namespace ChemForge.Core.Pipe
             }
             catch (System.Exception ex)
             {
-                ed.WriteMessage("\n管线分割失败: " + ex.Message);
+                ed.WriteMessage("\n" + req.AvoidLabel + "分割失败: " + ex.Message);
                 return 0;
             }
 
@@ -849,13 +1201,13 @@ namespace ChemForge.Core.Pipe
             if (kept == 0) return 0; // 没有保留片段，异常，保持原样
 
             // 4) 架桥：直接按合并后的缺口生成半圆，与缺口严格一致
-            if (bridgeMode)
+            if (req.BridgeMode)
             {
                 foreach (Interval iv in merged)
                 {
                     Point3d a = curve.GetPointAtParameter(iv.Start);
                     Point3d b = curve.GetPointAtParameter(iv.End);
-                    CreateBridgePolyline(a, b, sideVector, pipe, props, modelSpace, tr);
+                    CreateBridgePolyline(a, b, req.SideVector, pipe, props, modelSpace, tr);
                 }
             }
 

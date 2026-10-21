@@ -186,6 +186,9 @@ namespace ChemForge.Application
                 Children =
                 {
                     new MenuItemDefinition("管线自动打断（缺口 / 半圆架桥）\t　　　　　　　　", "ID_BreakPipe", CommandNames.PipeBreak + " "),
+                    // 仪表线自动打断（INSTBREAK）：与上一项同引擎，差别是图层要点选两次
+                    // （仪表线图层 + 管线图层）、不询问缺口方向（固定打断仪表线）。
+                    new MenuItemDefinition("仪表线自动打断（缺口 / 半圆架桥）\t　　　　　　　　", "ID_BreakInstrument", CommandNames.InstrumentBreak + " "),
                     // 仪表块自动编号（TAGNO）2026-10-14 从菜单与功能区摘掉：命令本身仍在
                     // （PackageContents.xml 里登记，命令行可直接敲），但业务尚未实现 ——
                     // NumberInstCommand 里仍是 TODO，只打印编号、不读不写图纸，

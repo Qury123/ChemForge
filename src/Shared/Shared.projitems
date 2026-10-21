@@ -28,10 +28,14 @@
     <Compile Include="$(MSBuildThisFileDirectory)Commands\Instrument\NumberInstCommand.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Commands\Pipe\PipeBreakCommand.cs"
                Condition="$(DefineConstants.Contains('NET48')) Or $(DefineConstants.Contains('NET80'))" />
+    <!-- 仪表线自动打断（INSTBREAK）：与 PIPEBREAK 共用 PipeBreakEngine，只是把避让侧
+         固定成仪表线图层、图层要点选两次。同条件，只对 AutoCAD 目标编。 -->
+    <Compile Include="$(MSBuildThisFileDirectory)Commands\Pipe\InstrumentBreakCommand.cs"
+               Condition="$(DefineConstants.Contains('NET48')) Or $(DefineConstants.Contains('NET80'))" />
     <Compile Include="$(MSBuildThisFileDirectory)Core\Numbering\NumberingEngine.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Core\Pipe\PipeBreakEngine.cs"
                Condition="$(DefineConstants.Contains('NET48')) Or $(DefineConstants.Contains('NET80'))" />
-    <!-- PIPEBREAK 的跨图纸记忆（上次宽度 / 上次管线图层）。改前存在 USERR1/USERS1 里，
+    <!-- PIPEBREAK / INSTBREAK 的跨图纸记忆（上次宽度 / 上次管线图层 / 上次仪表线图层）。改前存在 USERR1/USERS1 里，
          那是「图纸」级变量，会把插件数据写进用户的每一张 DWG；现在落在运行时目录下的
          PipeBreak.settings。只有 PipeBreakEngine 用它，故与它同条件。 -->
     <Compile Include="$(MSBuildThisFileDirectory)Core\Pipe\PipeBreakSettings.cs"
