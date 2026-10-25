@@ -187,15 +187,37 @@ function Test-CuixNeedsChange([string]$path, [bool]$uninstall, [bool]$isGroupFil
                 }
                 elseif ($t -notmatch 'PartialMenuFile>ChemForge\.cuix') { return $true }
             }
+            # 方案2：宿主组里要有 ChemForge 根菜单副本（别名 CFHOST_POP）
+            $ep = $zip.GetEntry('PopMenuRoot.cui')
+            if ($null -ne $ep) {
+                $srp = New-Object System.IO.StreamReader($ep.Open(), [System.Text.Encoding]::UTF8)
+                $tp = $srp.ReadToEnd(); $srp.Close()
+                if ($uninstall) {
+                    if ($tp -match 'CFHOST_POP') { return $true }
+                }
+                elseif ($tp -notmatch 'CFHOST_POP') { return $true }
+            }
         }
-        # WorkspaceRoot.cui：安装路径已不再改写（工作空间 WSPop 交给 Mount-ChemForgeMenu.ps1），
-        # 只有卸载时才需要摘掉历史遗留的 CHEMFORGE WSPop。
-        if ($uninstall) {
-            $e2 = $zip.GetEntry('WorkspaceRoot.cui')
-            if ($null -ne $e2) {
-                $sr2 = New-Object System.IO.StreamReader($e2.Open(), [System.Text.Encoding]::UTF8)
-                $t2 = $sr2.ReadToEnd(); $sr2.Close()
-                if ($t2 -match 'MenuGroup="CHEMFORGE"') { return $true }
+        # WorkspaceRoot.cui：
+        #   安装 —— 每个工作空间都必须有一条指向宿主组副本的 WSPop（经典菜单栏靠它把
+        #            ChemForge 菜单项画出来），且不得残留旧的 CHEMFORGE 组引用。
+        #   卸载 —— 这类引用必须一条不剩，连同历史扁平方案遗留的 pUID=ID_CFPNP_ROOT。
+        $e2 = $zip.GetEntry('WorkspaceRoot.cui')
+        if ($null -ne $e2) {
+            $sr2 = New-Object System.IO.StreamReader($e2.Open(), [System.Text.Encoding]::UTF8)
+            $t2 = $sr2.ReadToEnd(); $sr2.Close()
+            if ($uninstall) {
+                if ($t2 -match '<WSPop\s+MenuGroup="CHEMFORGE"' -or $t2 -match 'pUID="ID_CFPNP_ROOT"' -or $t2 -match ('pUID="' + $script:HostPopAlias + '"')) { return $true }
+            }
+            elseif ($isGroupFile -and $script:HostPopEnabled) {
+                $wsCount = ([regex]::Matches($t2, '<Workspace\b[^>]*>')).Count
+                $cfCount = ([regex]::Matches($t2, ('<WSPop\s+MenuGroup="[A-Z0-9]+"\s+pUID="' + $script:HostPopAlias + '"'))).Count
+                if ($cfCount -lt $wsCount) { return $true }
+                if ($t2 -match '<WSPop\s+MenuGroup="CHEMFORGE"') { return $true }
+            }
+            else {
+                # 非宿主文件、或声明式宿主组方案已停用时：只清理历史废弃引用，有残留才需要动它。
+                if ($t2 -match 'pUID="ID_CFPNP_ROOT"' -or $t2 -match ('pUID="' + $script:HostPopAlias + '"')) { return $true }
             }
         }
         return $false
@@ -279,13 +301,48 @@ function Test-CuixEntrySanity([string]$path, [string[]]$Forbid, [string[]]$Only)
 }
 
 # 目标 WSPop 块（插在 EXPRESS WSPop 之后；UID 用随机 4 位十六进制保证全局唯一）
-function New-WsPopBlock {
+function New-WsPopBlock([string]$hostGroup) {
     $uid = 'WSPU_250_' + (-join ((48..57) + (65..70) | Get-Random -Count 4 | ForEach-Object { [char]$_ }))
     return @"
-      <WSPop MenuGroup="CHEMFORGE" pUID="ID_ChemForgeMenu" Display="1" UID="$uid">
+      <WSPop MenuGroup="$hostGroup" pUID="$($script:HostPopAlias)" Display="1" UID="$uid">
         <ModifiedRev MajorVersion="25" MinorVersion="0" UserVersion="1" />
       </WSPop>
 "@
+}
+
+# ---------------------------------------------------------------------
+#  方案2（2026-10-24 定案）：把 ChemForge 根菜单整棵复制进**宿主菜单组**
+# ---------------------------------------------------------------------
+#  经典菜单栏在 AutoCAD 启动、构建菜单栏那一刻就定型，只认那一刻已经存在的菜单组。
+#  CHEMFORGE 是插件加载（启动后 4~5 秒）才出现的局部菜单，它的
+#  <WSPop MenuGroup="CHEMFORGE"> 永远被忽略 —— Express 能上栏，是因为宿主启动时
+#  就加载了 acetmain.cuix。所以：根菜单复制一份进宿主组的 PopMenuRoot.cui，
+#  别名 CFHOST_POP，工作空间引用改成 MenuGroup="<宿主组>" pUID="CFHOST_POP"。
+#  菜单宏仍由 CHEMFORGE 局部菜单提供（MacroRef 按 ID 全局解析，不受分组影响）。
+#  卸载：按别名/UID 前缀把这一整块摘掉，宿主的 PopMenuRoot.cui 复原。
+$script:HostPopAlias = 'CFHOST_POP'
+$script:HostPopUidPrefix = 'CFH_250_'
+# 2026-10-24 定案：经典菜单栏改为**运行时插入**（MenuService.EnsureMenuBarItem 用 COM
+# Application.MenuGroups.Item("CHEMFORGE").Menus.Item("ChemForge").InsertInMenuBar）。
+# 理由是实测：宿主只认启动时已注册的菜单组里的 WSPop，ChemForge 组由插件在启动 5 秒后才
+# 注册，写多少条 WSPop 都不会进菜单栏；把根菜单复制进宿主组也不被采纳。
+# 因此下面这段「宿主组内声明」的写入代码默认**停用**，只保留清理能力（保证老机器残留能撤干净），
+# 需要复现当年实验时设置环境变量 CF_DECLARATIVE_HOSTPOP=1。
+$script:HostPopEnabled = ($env:CF_DECLARATIVE_HOSTPOP -eq '1')
+
+function Get-HostPopMenuBlock([string]$cuixSource) {
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($cuixSource)
+    try { $t = Get-EntryText $zip 'PopMenuRoot.cui' } finally { $zip.Dispose() }
+    if (-not $t) { throw ("无法从 {0} 读取 PopMenuRoot.cui" -f $cuixSource) }
+    $m = [regex]::Match($t, '(?s)\r?\n([ \t]*)<PopMenu\b[^>]*UID="ID_ChemForgeMenu"[^>]*>.*?</PopMenu>')
+    if (-not $m.Success) { throw 'ChemForge.cuix 里没有找到根弹出菜单（UID=ID_ChemForgeMenu）' }
+    $block = $m.Value.Trim("`r", "`n")
+    # ★ 所有 UID 加前缀：宿主组里已有大量对象，撞号会让宿主静默丢弃整棵菜单。
+    $block = [regex]::Replace($block, 'UID="', 'UID="' + $script:HostPopUidPrefix)
+    # 别名只留一个，指向宿主组里那份副本；POP16 是 ChemForge 局部菜单自己的槽位，不带过去。
+    $block = $block -replace '(?m)^[ \t]*<Alias>POP16</Alias>[ \t]*\r?\n', ''
+    $block = $block -replace '(?m)^([ \t]*)<Alias>ID_ChemForgeMenu</Alias>', ('$1<Alias>' + $script:HostPopAlias + '</Alias>')
+    return $block
 }
 
 function Get-EntryText($zip, $name) {
@@ -372,6 +429,10 @@ foreach ($dir in $supportDirs) {
 
         $headerChanged = $false
         $wsChanged = $false
+        $popChanged = $false
+        # 宿主组名：Plant 3D 是 PNP，纯 AutoCAD 是 ACAD。工作空间引用里的 MenuGroup 必须用它，
+        # 否则引用指向不存在的组 —— 悬空引用会连带把整条菜单栏打塌。
+        $script:CurrentHostGroup = $(if ($file.Name -match '(?i)^acad') { 'ACAD' } else { 'PNP' })
         # 局部菜单注册放进**宿主（组）文件**：Plant 3D 是 PnP.cuix（Express/acetmain.cuix 同链，
         # 实测菜单组随启动加载）；纯 AutoCAD 是 acad.cuix —— 它的 Header.cui 里本来就用同样
         # 的 <PartialMenuFile> 机制加载 custom.cuix / appmanager.cuix，机制一致。
@@ -427,22 +488,104 @@ foreach ($dir in $supportDirs) {
 
                 if ($Uninstall) {
                     $new = [regex]::Replace($wsText, '(?s)[ \t]*<WSPop\s+MenuGroup="CHEMFORGE"[^>]*>.*?</WSPop>[ \t]*\r?\n?', '')
+                    # 方案2 写进宿主组的副本引用（MenuGroup="PNP"/"ACAD" + pUID=CFHOST_POP）
+                    $new = [regex]::Replace($new, ('(?s)[ \t]*<WSPop\s+MenuGroup="[A-Z0-9]+"\s+pUID="' + $script:HostPopAlias + '"[^>]*>.*?</WSPop>[ \t]*\r?\n?'), '')
+                    # 历史扁平方案遗留：pUID 指向宿主组里那个 ID_CFPNP_ROOT 弹出菜单。
+                    $new = [regex]::Replace($new, '(?s)[ \t]*<WSPop\b[^>]*pUID="ID_CFPNP_ROOT"[^>]*>.*?</WSPop>[ \t]*\r?\n?', '')
+                    # 功能区选项卡引用（Mount-ChemForgeMenu.ps1 写的）一并摘掉，
+                    # 否则卸载校验会因「仍残留 chemforge」判定失败而整份回滚。
+                    $new = [regex]::Replace($new, '(?s)[ \t]*<WSRibbonTabSourceReference\b[^>]*MenuGroup="CHEMFORGE"[^>]*>.*?</WSRibbonTabSourceReference>[ \t]*\r?\n?', '')
                     if ($new -ne $wsText) {
                         Set-EntryText $zip 'WorkspaceRoot.cui' $new $wsBom
                         $wsChanged = $true
                     }
                 }
-                elseif ($wsText -notmatch 'MenuGroup="CHEMFORGE"') {
-                    # 已停用：工作空间 WSPop 改由 Mount-ChemForgeMenu.ps1 写
-                    # MenuGroup="PNP" 的引用（Classic 菜单栏只认被挂载菜单所在组的真实组名，
-                    # 写 CHEMFORGE 会让菜单栏丢项/切换工作空间后消失，详见该脚本说明）。
-                    Write-Output ("  {0}：工作空间 WSPop 由 Mount-ChemForgeMenu.ps1 统一维护，此处跳过" -f $file.Name)
+                elseif (-not $script:HostPopEnabled) {
+                    # 默认路径：工作空间里不写任何 CHEMFORGE 菜单引用（原因见 $script:HostPopEnabled 定义处）。
+                    # 只清理历史遗留，避免老机器上残留的悬空引用把菜单栏打塌。
+                    $clean = [regex]::Replace($wsText, ('(?s)[ \t]*<WSPop\s+MenuGroup="[A-Z0-9]+"\s+pUID="' + $script:HostPopAlias + '"[^>]*>.*?</WSPop>[ \t]*\r?\n?'), '')
+                    $clean = [regex]::Replace($clean, '(?s)[ \t]*<WSPop\b[^>]*pUID="ID_CFPNP_ROOT"[^>]*>.*?</WSPop>[ \t]*\r?\n?', '')
+                    if ($clean -ne $wsText) {
+                        Set-EntryText $zip 'WorkspaceRoot.cui' $clean $wsBom
+                        $wsChanged = $true
+                    }
+                }
+                else {
+                    #   工作空间引用指向宿主组 + 别名 CFHOST_POP。旧的 CHEMFORGE 组引用必须清掉：
+                    #   那条引用指向「启动时还不存在的组」，AutoCAD 静默忽略，还会挡住重复检查。
+                    $clean = [regex]::Replace($wsText, '(?s)[ \t]*<WSPop\s+MenuGroup="CHEMFORGE"[^>]*>.*?</WSPop>[ \t]*\r?\n?', '')
+                    # ★ 只给**宿主组文件**加引用。非宿主文件（acad.CUIX、acad.bak.cuix）里没有
+                    #   CFHOST_POP 这个菜单定义，写进去就是悬空引用 —— 悬空的 WSPop 会让宿主
+                    #   把整条菜单栏塌掉（2026-10-23 实测）。这类文件只做清理，不做新增。
+                    if (-not $isGroupFile) {
+                        # 只清理，不新增（理由见上）。
+                        if ($clean -ne $wsText) {
+                            Set-EntryText $zip 'WorkspaceRoot.cui' $clean $wsBom
+                            $wsChanged = $true
+                        }
+                    }
+                    else {
+                    $addWsPop = {
+                        param($m)
+                        $blk = $m.Value
+                        if ($blk -match ('pUID="' + $script:HostPopAlias + '"')) { return $blk }
+                        $pop = New-WsPopBlock $script:CurrentHostGroup
+                        # 锚点：优先 EXPRESS 之后，退化到本工作空间第一个 WSPop 之后，
+                        # 再退化到 </Workspace> 之前。只加一条，不重复。
+                        $anchor = [regex]::Match($blk, '(?s)<WSPop\s+MenuGroup="EXPRESS"[^>]*>\s*<ModifiedRev[^>]*/>\s*</WSPop>')
+                        if (-not $anchor.Success) {
+                            $anchor = [regex]::Match($blk, '(?s)<WSPop\b[^>]*>\s*<ModifiedRev[^>]*/>\s*</WSPop>')
+                        }
+                        if ($anchor.Success) {
+                            $pos = $anchor.Index + $anchor.Length
+                            return $blk.Substring(0, $pos) + "`r`n" + $pop + $blk.Substring($pos)
+                        }
+                        $end = $blk.LastIndexOf('</Workspace>')
+                        if ($end -lt 0) { return $blk }
+                        return $blk.Substring(0, $end) + $pop + "`r`n    " + $blk.Substring($end)
+                    }
+                    $new = [regex]::Replace($clean, '(?s)<Workspace\b[^>]*>.*?</Workspace>', $addWsPop)
+                    if ($new -ne $wsText) {
+                        Set-EntryText $zip 'WorkspaceRoot.cui' $new $wsBom
+                        $wsChanged = $true
+                    }
+                    }
+                }
+            }
+
+            # --- PopMenuRoot.cui：宿主组里放一份 ChemForge 根菜单副本（方案2 的核心）---
+            $popEntry = $zip.GetEntry('PopMenuRoot.cui')
+            if ($null -ne $popEntry -and $isGroupFile) {
+                $msp = New-Object System.IO.MemoryStream
+                $stp = $popEntry.Open(); $stp.CopyTo($msp); $stp.Dispose()
+                $popBytes = $msp.ToArray(); $msp.Dispose()
+                $popText = [System.Text.Encoding]::UTF8.GetString($popBytes)
+                $popBom = Get-BomFlag $popBytes
+                # 按根菜单 UID 前缀整块定位：卸载/重装都先摘掉旧副本，保证幂等、内容永远最新。
+                $popPattern = '(?s)\r?\n?[ \t]*<PopMenu\b[^>]*UID="' + $script:HostPopUidPrefix + 'ID_ChemForgeMenu"[^>]*>.*?</PopMenu>'
+                if ($Uninstall) {
+                    $new = [regex]::Replace($popText, $popPattern, '')
+                }
+                elseif (-not $script:HostPopEnabled) {
+                    # 默认路径：宿主组里不放 ChemForge 副本；若历史版本放过，这里顺手摘掉。
+                    $new = [regex]::Replace($popText, $popPattern, '')
+                }
+                else {
+                    $stripped = [regex]::Replace($popText, $popPattern, '')
+                    $block = Get-HostPopMenuBlock $CuixSource
+                    $idx = $stripped.LastIndexOf('</PopMenuRoot>')
+                    if ($idx -lt 0) { $new = $stripped }
+                    else { $new = $stripped.Substring(0, $idx) + $block + "`r`n  " + $stripped.Substring($idx) }
+                }
+                if ($new -ne $popText) {
+                    Set-EntryText $zip 'PopMenuRoot.cui' $new $popBom
+                    $popChanged = $true
                 }
             }
         }
         finally { $zip.Dispose() }
 
-        if ($headerChanged -or $wsChanged) {
+        if ($headerChanged -or $wsChanged -or $popChanged) {
             # ★ 改完必须校验，不能只打印「已完成」就了事：
             #   XML 是否还合法、该删的残留是否真的归零。任一不过就从备份整份回滚。
             $forbid = @()
@@ -450,9 +593,10 @@ foreach ($dir in $supportDirs) {
             $only = @()
             if ($headerChanged) { $only += 'Header.cui' }
             if ($wsChanged)     { $only += 'WorkspaceRoot.cui' }
+            if ($popChanged)    { $only += 'PopMenuRoot.cui' }
             if (Test-CuixEntrySanity $file.FullName $forbid $only) {
                 $touchedFiles++
-                Write-Output ("  {0}：Header={1} Workspace={2} —— 校验通过" -f $file.Name, $headerChanged, $wsChanged)
+                Write-Output ("  {0}：Header={1} Workspace={2} PopMenu={3} —— 校验通过" -f $file.Name, $headerChanged, $wsChanged, $popChanged)
             }
             else {
                 Copy-Item $fileBackup $file.FullName -Force
@@ -472,9 +616,13 @@ else {
 if ($backupRoot) { Write-Output ("备份目录：{0}" -f $backupRoot) }
 else { Write-Output '本次没有任何 CUIx 需要改动，未创建备份目录。' }
 
-# ---- 挂载到出厂 PNP 组（唯一能被经典菜单栏稳定画出的形态）----
-# 详见 Mount-ChemForgeMenu.ps1 顶部说明：扁平弹出菜单写进出厂 PnP.cuix（PNP 组）、
-# 工作空间 WSPop 用 MenuGroup="PNP"、配置文件布局写连续块条目 PopN = PNP popn。
+# ---- 功能区选项卡工作空间引用（Mount 脚本）----
+# 2026-10-23 定案分工：
+#   经典菜单栏 = 本脚本的 PartialMenuFile + CHEMFORGE WSPop（全部工作空间）+ 根菜单
+#   POP16 别名 + 扁平根菜单（插件生成 ChemForge.cuix 时直挂 PopMenuItem）；
+#   Mount-ChemForgeMenu.ps1 只负责功能区选项卡的工作空间引用（Express 同款做法）。
+#   安装与卸载都调用 Mount：安装写功能区引用；卸载时清理它历史写入的扁平菜单
+#   （ID_CFPNP_ROOT）、ID_CF_* 宏、宿主组 WSPop 与注册表布局条目。
 $mountScript = Join-Path $PSScriptRoot 'Mount-ChemForgeMenu.ps1'
 if (Test-Path $mountScript) {
     Write-Output ''

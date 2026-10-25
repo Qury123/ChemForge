@@ -8,13 +8,17 @@ namespace ChemForge.CAD.Impl
     /// <summary>
     /// .NET Framework 4.8 环境下的菜单服务实现（兼容 AutoCAD 2019-2024）。
     ///
-    /// 菜单栏显示走与 Net80 相同的**声明式挂载**路线：
+    /// 菜单栏显示走与 Net80 相同的**声明式挂载**路线（2026-10-23 实测定案，缺一不可）：
     ///  1. ChemForge.cuix 由部署脚本生成/安装到 AutoCAD 用户支持目录，并登记为宿主
     ///     CUIx（PnP.cuix）的局部菜单（PartialMenuFile），见
-    ///     deploy\Dev\Mount-ChemForgeMenu.ps1；
-    ///  2. 根菜单带官方菜单栏别名（POP1–POP16 之一），AutoCAD 加载 CUIx 时自动把它
-    ///     挂上菜单栏，无需运行时改宿主文件、也无需写工作空间 WSPop；
-    ///  3. 插件运行时只做两件小事：把 MENUBAR 置 1、换图后复查一次。
+    ///     deploy\Dev\Register-ChemForgeMenu.ps1；
+    ///  2. 根菜单带官方菜单栏别名（POP1–POP16 之一）；
+    ///  3. **宿主 CUIx 的每个工作空间都写入了指向根菜单的 WSPop 引用**（与 Express
+    ///     逐字同构）。POPn 别名的"加载即上栏"只在加载那一刻生效，切工作空间重建
+    ///     菜单栏时按 WSPop 列表来，缺引用就掉且切回来不回来（Net80 侧反复实测）；
+    ///  4. 根菜单必须是**扁平结构**（直接命令项）：子项全是 PopMenuRef 的弹出菜单
+    ///     AutoCAD 2025 画不上菜单栏（模型在、画面不渲染）；
+    ///  5. 插件运行时只做两件小事：把 MENUBAR 置 1、换图后复查一次。
     ///
     /// 已删除的历史做法（每一条都对应一次现场故障）：
     ///  - 通过 COM（AcadApplication.MenuGroups / MenuBar / InsertInMenuBar）在运行时
@@ -92,8 +96,8 @@ namespace ChemForge.CAD.Impl
         {
             // 声明式挂载：菜单随 CUIx 由 AutoCAD 自己加载与卸载，插件不再在运行时建组，
             // 因此这里没有需要卸载的 COM 菜单组。
-            // 若要清除安装痕迹（局部菜单登记 / 别名 / 历史布局条目），请关闭 CAD 后执行
-            // deploy\Dev\Mount-ChemForgeMenu.ps1 -Uninstall。
+            // 若要清除安装痕迹（局部菜单登记 / 工作空间 WSPop 引用 / 菜单文件），
+            // 请关闭 CAD 后执行 deploy\Dev\Register-ChemForgeMenu.ps1 -Uninstall [-RemoveFile]。
             Logger.Info("ChemForge 菜单为声明式挂载，UnloadMenu 无需运行时卸载动作。");
         }
     }

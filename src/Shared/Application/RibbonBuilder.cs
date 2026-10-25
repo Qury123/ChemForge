@@ -53,12 +53,7 @@ namespace ChemForge.Application
         private static readonly Dictionary<string, ImageSource> IconCache = new Dictionary<string, ImageSource>();
 
         /// <summary>
-        /// 本会话是否由插件自己在运行时创建过功能区选项卡（退出时只拆自己建的那个）
-        /// </summary>
-        private static bool _runtimeTabCreated;
-
-        /// <summary>
-        /// "声明式选项卡已加载但当前工作空间未引用它"的警告只记一次，避免探测循环刷屏
+        /// "声明式选项卡已加载但当前工作空间未引用它"的警告只记一次，避免重复刷屏
         /// </summary>
         private static bool _hiddenTabWarned;
 
@@ -200,11 +195,11 @@ namespace ChemForge.Application
                 }
 
                 var tab = FindTab(ribbon);
-                if (tab != null && !tab.IsVisible && !_runtimeTabCreated && !_hiddenTabWarned)
+                if (tab != null && !tab.IsVisible && !_hiddenTabWarned)
                 {
                     _hiddenTabWarned = true;
                     Logger.Warning("ChemForge 选项卡已加载但当前工作空间未引用它，可能不可见；"
-                        + "请运行 deploy\\Dev\\Mount-ChemForgeMenu.ps1 把选项卡引用写进工作空间。");
+                        + "请运行 deploy\\Dev\\Register-ChemForgeMenu.ps1 把选项卡引用写进工作空间。");
                 }
 
                 return tab != null;
@@ -216,140 +211,53 @@ namespace ChemForge.Application
         }
 
         /// <summary>
-        /// 确保 ChemForge 功能区选项卡已创建（幂等，可在文档激活或空闲时反复调用）。
-        /// 返回 true 表示创建成功或已存在；false 表示功能区尚未就绪，调用方应稍后重试。
+        /// 列出功能区当前实际拥有的选项卡（Id/标题/可见性），用于部署自检的诊断日志。
+        /// 只读，不改功能区。
         /// </summary>
-        public static bool EnsureRibbon()
+        internal static string DescribeTabs()
         {
             try
             {
                 var ribbon = ComponentManager.Ribbon;
                 if (ribbon == null)
                 {
-                    Logger.Info("AutoCAD 功能区尚未就绪，稍后重试。");
-                    return false;
+                    return "功能区对象为空（Ribbon 未初始化）";
                 }
 
-                if (FindTab(ribbon) != null)
+                if (ribbon.Tabs == null)
                 {
-                    return true;
+                    return "功能区选项卡集合为空";
                 }
 
-                var tab = new RibbonTab
+                var parts = new List<string>();
+                int total = 0;
+                var cfHits = new List<string>();
+                foreach (var tab in ribbon.Tabs)
                 {
-                    Title = MenuDefinition.RootMenuTitle,
-                    Id = TabId
-                };
-
-                foreach (var menuDefinition in MenuDefinition.Menus)
-                {
-                    // 面板标题用纯显示名（去掉 \t 命令名/提示段）
-                    var panelSource = new RibbonPanelSource { Title = menuDefinition.DisplayTitle };
-
-                    foreach (var commandDefinition in menuDefinition.Children)
+                    if (tab == null)
                     {
-                        // 分隔线只对下拉菜单有意义，功能区面板直接跳过
-                        if (commandDefinition.IsSeparator)
-                        {
-                            continue;
-                        }
-
-                        var button = new RibbonButton
-                        {
-                            Text = commandDefinition.DisplayTitle,
-                            ShowText = true,
-                            Size = RibbonItemSize.Large,
-                            CommandHandler = SharedCommandHandler,
-                            CommandParameter = commandDefinition.Macro
-                        };
-
-                        // 按钮图标：大按钮显示 LargeImage(32×32)，小图 Image(16×16) 同时设置。
-                        // 加载失败则退化为纯文字按钮。
-                        var smallIcon = LoadIcon(GetIconResource(commandDefinition.Macro, 16));
-                        var largeIcon = LoadIcon(GetIconResource(commandDefinition.Macro, 32));
-                        if (largeIcon != null || smallIcon != null)
-                        {
-                            if (largeIcon != null) button.LargeImage = largeIcon;
-                            if (smallIcon != null) button.Image = smallIcon;
-                            button.ShowImage = true;
-                        }
-                        else
-                        {
-                            button.ShowImage = false;
-                        }
-
-                        panelSource.Items.Add(button);
+                        continue;
                     }
 
-                    tab.Panels.Add(new RibbonPanel { Source = panelSource });
+                    total++;
+                    parts.Add($"{tab.Id}/{tab.Title}/{(tab.IsVisible ? "可见" : "隐藏")}");
+
+                    var id = tab.Id ?? string.Empty;
+                    var title = tab.Title ?? string.Empty;
+                    if (id.IndexOf("CHEMFORGE", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        title.IndexOf("ChemForge", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        cfHits.Add($"{id}/{title}/{(tab.IsVisible ? "可见" : "隐藏")}");
+                    }
                 }
 
-                ribbon.Tabs.Add(tab);
-                _runtimeTabCreated = true;
-                Logger.Info("ChemForge 功能区选项卡已创建。");
-                return true;
+                var hitText = cfHits.Count == 0 ? "无" : string.Join("; ", cfHits);
+                return $"共{total}个：{string.Join("; ", parts)}  ||CHEMFORGE命中：{hitText}";
             }
             catch (Exception ex)
             {
-                Logger.Error("创建 ChemForge 功能区选项卡失败。", ex);
-                return false;
+                return "读取功能区选项卡失败：" + ex.Message;
             }
-        }
-
-        /// <summary>
-        /// 移除 ChemForge 功能区选项卡（插件终止时调用）。
-        ///
-        /// 只移除**本会话由插件自己创建**的那个选项卡：CUIx 里声明式定义的选项卡
-        /// 归 AutoCAD 所有（它的 Id 也可能等于 TabId），插件不该在退出时把它拆掉。
-        /// </summary>
-        public static void RemoveRibbon()
-        {
-            try
-            {
-                if (!_runtimeTabCreated)
-                {
-                    return;
-                }
-
-                var ribbon = ComponentManager.Ribbon;
-                if (ribbon == null)
-                {
-                    return;
-                }
-
-                var tab = FindRuntimeTab(ribbon);
-                if (tab != null)
-                {
-                    ribbon.Tabs.Remove(tab);
-                    _runtimeTabCreated = false;
-                    Logger.Info("ChemForge 功能区选项卡已移除。");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning($"移除 ChemForge 功能区选项卡失败：{ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 按运行时 Id 精确查找插件自建的选项卡（不做标题兜底匹配）
-        /// </summary>
-        private static RibbonTab FindRuntimeTab(RibbonControl ribbon)
-        {
-            if (ribbon.Tabs == null)
-            {
-                return null;
-            }
-
-            foreach (var tab in ribbon.Tabs)
-            {
-                if (tab != null && string.Equals(tab.Id, TabId, StringComparison.Ordinal))
-                {
-                    return tab;
-                }
-            }
-
-            return null;
         }
 
         /// <summary>
@@ -377,16 +285,30 @@ namespace ChemForge.Application
 
                 // 两种来源都要认出来，避免"声明式 + 运行时兜底"各建一个 ChemForge 选项卡：
                 //  1) 运行时兜底自建的选项卡：Id 就是 TabId；
-                //  2) CUIx 里声明式定义的选项卡：ElementID 用的是同一个 TabId，
-                //     但运行时 Id 未必等于 UID，故再按标题兜一层。
-                if (string.Equals(tab.Id, TabId, StringComparison.Ordinal) ||
-                    string.Equals(tab.Title, MenuDefinition.RootMenuTitle, StringComparison.Ordinal))
+                //  2) CUIx 里声明式定义的选项卡：宿主会把 Id 加上菜单组前缀
+                //     （实测形如 CHEMFORGE.CF_RIBBON_TAB_CHEMFORGE），故按包含匹配再兜一层标题。
+                if (Matches(tab.Id, TabId) ||
+                    Matches(tab.Title, MenuDefinition.RootMenuTitle))
                 {
                     return tab;
                 }
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// 宽松匹配：宿主给声明式选项卡的 Id 带菜单组前缀，精确比较会漏判。
+        /// </summary>
+        private static bool Matches(string value, string expected)
+        {
+            if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(expected))
+            {
+                return false;
+            }
+
+            return string.Equals(value, expected, StringComparison.OrdinalIgnoreCase)
+                || value.IndexOf(expected, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         /// <summary>

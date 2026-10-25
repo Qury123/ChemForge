@@ -1,9 +1,66 @@
-# CHANGELOG
+﻿# CHANGELOG
 
 所有 ChemForge 项目的显著变更均记录于此文件。
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+
+## [1.2.1] - 2026-10-25
+
+### Fixed
+- **启动卡顿：删除"运行时兜底创建功能区选项卡"整条链路**
+  每次启动日志都有「ChemForge 功能区选项卡已创建」——因为 CUIx 里声明的选项卡从未被宿主采纳，
+  插件只能在启动后 20 秒内每 0.5 秒探测一次（失败后间隔放大到 5 秒、并带重建计数），
+  再自建一整套 WPF `RibbonTab`/`RibbonPanel`/按钮塞进 `ComponentManager.Ribbon`。
+  实测修复前 218 个会话里 143 个走的是这条路径。现在：删除全部探测/自建/重建计数代码，
+  `EnsureRibbonOnce()` 改为 `CheckDeclarativeRibbonTab()`（只检查、只记日志），
+  `RibbonBuilder` 删除 `EnsureRibbon`/`RemoveRibbon`/`FindRuntimeTab`。
+- **启动卡顿：删除 Idle 里每 2 秒一次的菜单栏轮询**
+  `Application.Idle` 上节流 2 秒的 `EnsureMenuBarItem()` 每轮有四个 COM 调用
+  （GetActiveObject → MenuGroups.Item → 遍历 Menus → MenuBar.Count/OnMenuBar），全在主线程。
+  现改为只在 `OnLoad` 与 `DocumentActivated` 各做一次幂等校正。
+- **功能区选项卡改为真·声明式挂载（三层修复）**
+  ① `Mount-ChemForgeMenu.ps1` 往 `PnP.cuix` 的 9 个工作空间写选项卡/面板引用（格式照抄宿主 EXPRESS 的写法）；
+  ② 引用项的 `UID` 原来 9 个工作空间共用一个值——宿主会把重复 UID 的引用**整条丢弃**，现改为按
+  `工作空间名 + TabId` 派生的稳定唯一 UID；
+  ③ 确认启动时 `WSCURRENT` 为空是常态，不再把"引用未被应用"误判成配置错误。
+  修复后日志稳定输出「声明式功能区选项卡已加载：CF_RIBBON_TAB_CHEMFORGE（启动后约 1 秒）」。
+- **MENUBAR 强写不再与功能区重建互相激发**
+  写 `MENUBAR=1` 会触发宿主重建功能区，声明式选项卡随之丢失，旧代码又据此重建并再写 MENUBAR，
+  一次会话能刷十几轮 WARN。现在 `MENUBAR` 仅在确实未显示时写一次，检查函数只记日志、不再触发重建。
+
+### Changed
+- **经典菜单栏改为「初始化后补挂一次 + 工作空间切换再补挂」（2026-10-24 定案）**
+  菜单栏的声明式路线当天被彻底证伪并记录证据：`WSPop` 的 `pUID` 是按 `PopMenu` 的 `UID`
+  解析（不是 `<Alias>`）；把根菜单复制进宿主 PnP 菜单组也照样不出现；把 Express 引用改成不存在的
+  `TabId` 会让菜单栏塌掉一半——说明引用会被解析，**解析时机早于 ChemForge 组注册（插件启动 5 秒后）**。
+  现在：`MenuService.EnsureMenuBarItem()` 在初始化完成后用
+  `((AcadApplication)_acad).MenuGroups.Item("CHEMFORGE").Menus.Item("ChemForge").InsertInMenuBar(14)`
+  补挂到菜单栏末尾，`UnloadMenu` 里 `RemoveFromMenuBar` 摘掉；
+  新增 `Application.SystemVariableChanged`（只认 `WSCURRENT`）→ 重建后重新补挂，切换工作空间不掉。
+  要点：`GetActiveObject("AutoCAD.Application")` 在本机 2025 上返回 `__ComObject`，取实例改为走 ROT
+  枚举 + `IUnknown.GetTypeInfo`，并按 ProgID 排序（`AutoCAD.Application.25` 优先）。
+  实测日志：`ChemForge 菜单未被工作空间挂上菜单栏，已在运行时补挂到第 14 位。`
+- **安装阶段完全不启动 AutoCAD（不弹窗、不占 CPU、不抢焦点）**
+  用户要求：安装时一定还在干别的事，不能被安装程序打断。为此删掉了早先版本里的
+  「装完自动预热一次」——那一步会打开 AutoCAD 约 45 秒再关掉，属于侵犯用户操作。
+  现在安装只做两件纯文件/注册表的事：往宿主 CUIx 写工作空间引用；若 `WSCURRENT` 为空，
+  补上宿主默认工作空间名（CUIx 里 `DefaultWorkspace="true"` 的那个）。
+  下次用户自己打开 CAD 时，宿主按 `WSCURRENT` 应用工作空间引用，ChemForge 选项卡一次到位；
+  卸载时把 `WSCURRENT` 还原成原值（记录在 `%LOCALAPPDATA%\ChemForge\ws-current-orig.json`）。
+- **装完首次启动补做一次"应用工作空间"（每个版本仅一次）**
+  实测：只写文件不应用时，宿主建功能区那一刻不会采纳 CUIx 里的引用，新装机器看不到 ChemForge 选项卡；
+  而每次启动都应用又会冲掉用户手工的功能区状态。折中方案：插件在启动 3 秒后检查一次，若选项卡缺失则
+  切一次工作空间再切回（约 1~2 秒），应用前记录、应用后还原功能区展开状态，随后写版本标记
+  `%LOCALAPPDATA%\ChemForge\workspace-applied-<版本>.flag`，之后每次启动都不再动界面。
+  环境变量 `CHEMFORGE_WORKSPACE_REAPPLY=1` 强制重跑、`=0` 彻底关闭。
+- **`Mount-ChemForgeMenu.ps1` 只写 `PnP.cuix`，不再写 `acad.CUIX`**
+  往主菜单文件里插 `WSPop` 会写出非法 XML（本次实测写出 42 个 `<WSPop>` 开头 / 45 个闭合标签）。
+  改动前自动备份到 `%LOCALAPPDATA%\ChemForge\MenuBackup\MenuMount-<时间戳>`，`-Uninstall` 按备份还原。
+
+### Docs
+- 新增 `docs/DeveloperGuide/Postmortem-2026-10-24-启动卡顿与功能区.md`（本地，不入库）：
+  完整时间线、实测数据、三层根因、7 个已踩过的坑、验收清单、回滚命令。
 
 ## [1.2.0] - 2026-10-19
 

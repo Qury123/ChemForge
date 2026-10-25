@@ -1,62 +1,45 @@
 ﻿<#
 .SYNOPSIS
-    把 ChemForge 菜单**以能真正画出来的形态**挂进 AutoCAD 出厂主定制文件。
+    把 ChemForge 功能区选项卡引用挂进宿主 CUIx 的工作空间，并清理历史挂载残留。
 
     宿主文件与组名**按支持目录自动判定**（2026-10-16 起支持纯 AutoCAD）：
       * Plant 3D 垂直产品：宿主 = PnP.cuix，组名 = PNP；
       * 纯 AutoCAD（含 2019-2024）：宿主 = acad.cuix / acad.CUIX，组名 = ACAD。
-    组名从宿主文件的 MenuGroup.cui 里读出来，不写死 —— 下面的说明以 Plant 3D 为例。
+    组名从宿主文件的 MenuGroup.cui 里读出来，不写死。
 
 .DESCRIPTION
-    为什么不用"独立 CHEMFORGE 组 + 局部菜单注册"那条路（实测结论，Plant 3D 2025）：
-      * 局部菜单（ChemForge.cuix）能加载、菜单组也在，但经典菜单栏**只在启动构建菜单栏那一次**
-        由 AutoCAD 把工作空间 WSPop 引用的弹出菜单追加并画出；切换工作空间/重建菜单栏即丢失；
-      * 一旦配置文件布局里存在 `Pop<n> = CHEMFORGE ...` 条目，AutoCAD 恢复菜单栏时还会报
-        "不能加载菜单项: CHEMFORGE:ChemForge" 并丢弃该项（COM 里有、界面没有）；
-      * 嵌套子菜单（根菜单 + <PopMenuRef>）挂在宿主组里能加载但**不会被画出来**。
+    2026-10-23 定案分工（本机 AutoCAD Plant 3D 2025 逐条实测定案）：
 
-    实测能稳定画出的形态（重启、切换工作空间都在）——本脚本就是把这三件事写进文件：
-      1) 在 **宿主 CUIX** 的 PopMenuRoot.cui 里放一个**扁平**弹出菜单（无子菜单，用分隔线分组）：
-         UID=ID_CFPNP_ROOT、<Alias>POPn</Alias>、字面名 `<Name xlate="false">ChemForge</Name>`、
-         工厂同款头部；菜单项从插件生成的 ChemForge.cuix 收割（标签/命令单一来源），
-         宏引用改写成 MenuMacroID="ID_CF_*"，宏定义同时写进宿主 CUIX 的 MenuGroup.cui；
-      2) 各工作空间 WorkspaceRoot.cui 里加 `<WSPop MenuGroup="<宿主组>" pUID="ID_CFPNP_ROOT">`
-         ——**组名必须是被挂载菜单所在组的真实名字**（写 CHEMFORGE 不生效）；
-      3) 配置文件布局 `<配置>\Menus` 里写 `Pop<下一个连续槽> = <宿主组> pop<n>`
-         ——槽号必须落在 Pop1..PopN **连续块**内，缺号会让其后的条目全部被忽略。
+    **经典菜单栏**（本脚本已不负责，由 Register-ChemForgeMenu.ps1 + 插件完成）：
+      * ChemForge.cuix 作为局部菜单登记进宿主 Header.cui（PartialMenuFile）；
+      * 根菜单带 POP16 别名 + 宿主每个工作空间写入
+        <WSPop MenuGroup="CHEMFORGE" pUID="ID_ChemForgeMenu">（与 Express 逐字同构）；
+      * 根菜单为**扁平结构**（直接 PopMenuItem）。三个事实都有实测依据：
+        ① POPn 别名只在 CUIx 加载那一刻自动上栏，切工作空间重建菜单栏按 WSPop 列表来，
+          缺引用就掉、切回来不回来；
+        ② 子项全是 <PopMenuRef> 的弹出菜单 AutoCAD 2025 永远不画（COM 模型在、画面不渲染）；
+        ③ 注册表 Menus 只是 AutoCAD 自己重写的镜像，脚本写布局条目无源作用。
 
-      4) 各工作空间 WorkspaceRoot.cui 里加 `<WSRibbonTabSourceReference MenuGroup="CHEMFORGE"
-         TabId="CF_RIBBON_TAB_CHEMFORGE">`（含各面板的 WSRibbonPanelSourceReference）
-         ——**这是"功能区选项卡与自带选项卡一起、开 CAD 就出现、切换工作空间不丢"的正路**：
-         Express Tools 就是这么做的（局部菜单 acetmain.cuix 里的 RibbonTabSource UID=RBN_0047，
-         被宿主 CUIX 的 9 个工作空间逐个引用）。只声明 RibbonTabSource 而不写工作空间引用时，
-         AutoCAD 会把它读进来但**不显示**，只能靠插件运行时补建（表现为"先出默认选项卡，
-         过一会儿 ChemForge 才刷新出来"）。面板按 "<组名>.<面板UID>" 引用，故插件生成 CUIx 时
-         面板 UID 必须是稳定值（CF_PANEL_*），否则每次重新生成都会让引用失效。
+    **功能区选项卡**（本脚本唯一职责）：
+      各工作空间 WorkspaceRoot.cui 里加 <WSRibbonTabSourceReference MenuGroup="CHEMFORGE"
+      TabId="CF_RIBBON_TAB_CHEMFORGE">（含各面板的 WSRibbonPanelSourceReference）——这是
+      "功能区选项卡与自带选项卡一起、开 CAD 就出现、切换工作空间不丢"的正路：Express
+      Tools 就是这么做的（局部菜单 acetmain.cuix 里的 RibbonTabSource 被宿主 CUIX 的 9 个
+      工作空间逐个引用）。只声明 RibbonTabSource 而不写工作空间引用时，AutoCAD 会把它
+      读进来但不保证显示。面板按 "<组名>.<面板UID>" 引用，故插件生成 CUIx 时面板 UID
+      必须是稳定值（CF_PANEL_*），否则每次重新生成都会让引用失效。
+
+    安装时只写功能区引用；不再向宿主组写扁平菜单/宏、不再写注册表布局条目
+    （避免菜单栏出现第二个 ChemForge、避免与 AutoCAD 的镜像机制抢键值）。
 
 .PARAMETER Uninstall
-    撤销：删掉挂载的弹出菜单、宏、WSPop、功能区选项卡引用与布局条目
-    （同时清理历史遗留的 CHEMFORGE 连续块条目）。
+    撤销：删除功能区选项卡引用，并清理历史遗留的扁平菜单（ID_CFPNP_ROOT）、
+    ID_CF_* 宏、宿主组 WSPop（pUID=ID_CFPNP_ROOT）与配置文件布局条目。
+    （CHEMFORGE 组的 WSPop 与 PartialMenuFile 由 Register-ChemForgeMenu.ps1 清理。）
 
 .PARAMETER CuixSource
-    收割菜单项/宏的来源 CUIx；默认为支持目录里的 ChemForge.cuix（插件生成的），
-    找不到时回退到 deploy\Dev\ChemForge.cuix（仓库引导副本）。
-
-    ⚠ 时间戳陷阱（2026-10-13 踩过；2026-10-16 已在插件侧根治）：
-      支持目录那份 ChemForge.cuix 只有在插件**重新生成**过之后才等于当前菜单定义。
-      本脚本第 2/4 步会用 ZipFile 'Update' 重写每个 .cuix/.cui 的工作空间，这一写会把
-      ChemForge.cuix 的 LastWriteTimeUtc 刷新到挂载时刻；而插件原先判断「要不要重建菜单
-      文件」用的是时间戳判据（cuix 时间 < 插件 DLL 时间 → 才重建）。于是「编译 → 挂载」
-      之后 CUIx 恒比 DLL 新，插件永远跳过重建，**改了 MenuDefinition 也传不进 CUIx**：
-      挂载收割到的还是旧菜单，菜单栏纹丝不动（v1.1.0 加 INSTBREAK 时就是这么被坑的）。
-
-      ⇒ 2026-10-16 起插件改用**内容判据**（src\Shared\CAD\Impl\MenuService_Net80.cs 的
-      MenuFileNeedsRebuild：比对 CUIx 里 MenuMacro 的 UID 集合与 MenuDefinition 的命令项
-      别名集合，不一致就重建），上面那条陷阱不再存在。改了菜单定义只要：
-        ① 重新编译并部署到本机（本机部署脚本）；
-        ② 启动 AutoCAD 一次 —— 插件发现 CUIx 内容与菜单定义不一致，自动重建权威版本；
-        ③ 完全退出 AutoCAD，再跑本脚本挂载。
-      不必再手工删 CUIx。挂载前请核对本脚本打印的「菜单项 N 个」= 当前 MenuDefinition 的叶子项数。
+    收割功能区选项卡/面板 UID 的来源 CUIx；默认为支持目录里的 ChemForge.cuix
+    （插件生成的），找不到时回退到 deploy\Dev\ChemForge.cuix（仓库引导副本）。
 
 .EXAMPLE
     pwsh -File .\Mount-ChemForgeMenu.ps1
@@ -131,10 +114,15 @@ if (-not $CuixSource) {
 
 # 备份目录**按需创建**：升级时如果某个 support 目录的内容已经是最新的，整个目录会被跳过，
 # 就不该在 %TEMP% 里留下一个空目录（2026-10-16 用户要求）。
+#
+# 2026-10-24：备份根从 %TEMP% 挪到 %LOCALAPPDATA%\ChemForge\MenuBackup。
+# %TEMP% 会被清理工具删掉，插件卸载时「恢复原样」就没底稿了；这里与插件日志/配置同根，
+# 卸载脚本能直接找到最近一次改动前的 PnP.cuix 快照。
 $backupRoot = ''
 function Get-BackupRoot {
     if (-not $script:backupRoot) {
-        $script:backupRoot = Join-Path $env:TEMP ("ChemForge-MenuMount-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $base = Join-Path $env:LOCALAPPDATA 'ChemForge\MenuBackup'
+        $script:backupRoot = Join-Path $base ("MenuMount-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
         New-Item -ItemType Directory -Force -Path $script:backupRoot | Out-Null
     }
     return $script:backupRoot
@@ -190,48 +178,44 @@ function Get-WorkspaceMounted([string]$ws, [string]$ribbonTabId, [string[]]$ribb
     # 组名必须是「被挂载菜单所在组」的真实名字：Plant 3D 是 PNP，纯 AutoCAD 是 ACAD。
     # 写错组名（或写成 CHEMFORGE）菜单栏会丢项 —— 组名由 Get-HostCuix 从宿主文件里读出。
     if (-not $hostGroup) { $hostGroup = 'PNP' }
-    $wsPop = @"
-      <WSPop MenuGroup="$hostGroup" pUID="$rootUid" Display="1" UID="WSPU_250_CFPNP">
-        <ModifiedRev MajorVersion="25" MinorVersion="0" UserVersion="1" />
-      </WSPop>
-"@
 
     # 功能区选项卡引用（插到每个工作空间 WSRibbonRoot 的末尾，选项卡排在最后）
-    $wsRibbon = ''
+    #
+    # ★ UID 必须**每个工作空间各自唯一**：宿主 PnP.cuix 里 107 条 WSRibbonTabSourceReference
+    #   对应 107 个互不相同的 UID（Express 的 RBN_0047 在 9 个工作空间各有一份、各自不同 UID）。
+    #   9 个工作空间共用同一个 UID 时，工作空间/重写逻辑只认第一条，其余工作空间拿不到选项卡。
+    #   后缀用「出现次序」而不是随机值：顺序稳定 ⇒ 重复运行结果逐字相同，仍然是幂等的。
+    $wsRibbonFactory = $null
     if (-not $uninstall -and $ribbonPanelIds.Count -gt 0) {
-        $sb = New-Object System.Text.StringBuilder
-        [void]$sb.AppendLine('      <WSRibbonTabSourceReference MenuGroup="CHEMFORGE" TabId="' + $ribbonTabId + '" Show="true" IsActive="false" UID="WSRU_250_CFCHEMFORGE">')
-        [void]$sb.AppendLine('        <ModifiedRev MajorVersion="25" MinorVersion="0" UserVersion="1" />')
-        $pn = 0
-        foreach ($panelId in $ribbonPanelIds) {
-            $pn++
-            [void]$sb.AppendLine('        <WSRibbonPanelSourceReference PanelId="CHEMFORGE.' + $panelId + '" Orientation="Docked" Show="true" xval="0" yval="0" FloatingGroup="0" FloatingOrder="0" FloatingOrientation="Vertical" PanelResizeOrder="100" UID="WSRP_250_CF' + $pn + '" />')
+        $wsRibbonFactory = {
+            param($match)
+            $script:wsRibbonIndex = [int]$script:wsRibbonIndex + 1
+            $i = [int]$script:wsRibbonIndex
+            $sb = New-Object System.Text.StringBuilder
+            [void]$sb.AppendLine('      <WSRibbonTabSourceReference MenuGroup="CHEMFORGE" TabId="' + $ribbonTabId + '" Show="true" IsActive="false" UID="WSRU_250_CF' + $i + '">')
+            [void]$sb.AppendLine('        <ModifiedRev MajorVersion="25" MinorVersion="0" UserVersion="1" />')
+            $pn = 0
+            foreach ($panelId in $ribbonPanelIds) {
+                $pn++
+                [void]$sb.AppendLine('        <WSRibbonPanelSourceReference PanelId="CHEMFORGE.' + $panelId + '" Orientation="Docked" Show="true" xval="0" yval="0" FloatingGroup="0" FloatingOrder="0" FloatingOrientation="Vertical" PanelResizeOrder="100" UID="WSRP_250_CF' + $i + '_' + $pn + '" />')
+            }
+            [void]$sb.AppendLine('      </WSRibbonTabSourceReference>')
+            return "`r`n" + $sb.ToString().TrimEnd() + "`r`n" + $match.Value
         }
-        [void]$sb.AppendLine('      </WSRibbonTabSourceReference>')
-        $wsRibbon = $sb.ToString().TrimEnd()
     }
 
-    # 清掉旧挂载引用与历史遗留的 CHEMFORGE 引用（后者会导致菜单栏丢项）
+    # 清掉历史扁平方案的挂载引用（pUID 指向宿主组里的 ID_CFPNP_ROOT）。
+    # ★ 2026-10-23 起 CHEMFORGE 工作空间 WSPop 由 Register-ChemForgeMenu.ps1 负责写，
+    #   本脚本**不得**再删它 —— 旧版这里会把它一起抹掉，等于每次跑安装脚本都把菜单栏条目清空。
     $ws = [regex]::Replace($ws, '(?s)[ \t]*<WSPop\b[^>]*pUID="' + $rootUid + '"[^>]*>.*?</WSPop>[ \t]*\r?\n?', '')
-    $ws = [regex]::Replace($ws, '(?s)[ \t]*<WSPop\b[^>]*MenuGroup="CHEMFORGE"[^>]*>.*?</WSPop>[ \t]*\r?\n?', '')
-    if (-not $uninstall) {
-        $eval = { param($m) return $m.Value + "`r`n" + $wsPop }
-        # 插入位置：优先 EXPRESS 之后（Plant 3D 的既有位置，行为与改动前逐字一致）；
-        # 纯 AutoCAD 没有 EXPRESS 组，退化成「本工作空间的第一个 WSPop 之后」。
-        # 只替换 1 处 —— 退化锚点会命中很多 WSPop，全替换会把菜单重复挂进去。
-        $anchor = '(?s)(<WSPop\s+MenuGroup="EXPRESS"[^>]*>\s*<ModifiedRev[^>]*/>\s*</WSPop>)'
-        if (-not [regex]::IsMatch($ws, $anchor)) {
-            $anchor = '(?s)(<WSPop\b[^>]*>\s*<ModifiedRev[^>]*/>\s*</WSPop>)'
-        }
-        $rx = New-Object System.Text.RegularExpressions.Regex($anchor)
-        $ws = $rx.Replace($ws, $eval, 1)
-    }
+    # 扁平挂载已废弃：不再往工作空间里插 MenuGroup="<宿主组>" 的 WSPop（那条引用会被 AutoCAD
+    # 重写 CUIx 时丢掉、变成悬空引用，见 docs/DeveloperGuide/MenuMounting-Reference.md）。
     # 功能区选项卡引用：先清旧（幂等），再插到每个 WSRibbonRoot 末尾
     $ws = [regex]::Replace($ws, '(?s)\r?\n?[ \t]*<WSRibbonTabSourceReference\b[^>]*TabId="' + [regex]::Escape($ribbonTabId) + '"[^>]*>.*?</WSRibbonTabSourceReference>[ \t]*\r?\n?', '')
     $ws = [regex]::Replace($ws, '(?s)\r?\n?[ \t]*<WSRibbonTabSourceReference\b[^>]*MenuGroup="CHEMFORGE"[^>]*>.*?</WSRibbonTabSourceReference>[ \t]*\r?\n?', '')
-    if (-not $uninstall -and $wsRibbon) {
-        $evalRibbon = { param($m) return "`r`n" + $wsRibbon + $m.Value }
-        $ws = [regex]::Replace($ws, '</WSRibbonRoot>', $evalRibbon)
+    if ($wsRibbonFactory) {
+        $script:wsRibbonIndex = 0
+        $ws = [regex]::Replace($ws, '</WSRibbonRoot>', $wsRibbonFactory)
     }
     return $ws
 }
@@ -288,49 +272,93 @@ function Get-HostCuix([string]$dir) {
 }
 
 # ---------- 升级预检：这个 support 目录里的挂载内容已经和来源一致吗？ ----------
-# 一致就整目录跳过 —— 不重写 PnP.cuix、不产生 %TEMP% 备份目录。
-# 升级（以及同一版本重装）时这是最常见的情形：菜单内容一个字都没变，
-# 却每次都把 PnP.cuix 重写一遍、在 %TEMP% 里堆一个备份目录（2026-10-16 用户要求改掉）。
-# 判据是**内容**而不是时间戳 —— 与 MenuService_Net80.MenuFileNeedsRebuild 同一思路。
-function Test-MountUpToDate([string]$dir, [ref]$aliasOut) {
-    $content = Get-SourceMenuContent $dir
-    if ($null -eq $content) { return $false }
-    $host_ = Get-HostCuix $dir
-    if ($null -eq $host_) { return $false }
-    $pnp = $host_.Path
-    $pop = Read-CuixEntry $pnp 'PopMenuRoot.cui'
-    $grp = Read-CuixEntry $pnp 'MenuGroup.cui'
-    if (-not $pop -or -not $grp) { return $false }
+# 2026-10-23 起本脚本只负责**功能区选项卡的工作空间引用**（经典菜单栏由
+# Register-ChemForgeMenu.ps1 的 CHEMFORGE WSPop 负责），预检判据 = 每个 CUIx
+# 的 WorkspaceRoot 经 Get-WorkspaceMounted（ribbon-only）变换后与现状逐字一致。
+# 一致就整目录跳过 —— 不重写 CUIx、不产生 %TEMP% 备份目录。
+function Test-MountUpToDate([string]$dir) {
+    $ribbonTabId = 'CF_RIBBON_TAB_CHEMFORGE'
+    $ribbonPanelIds = @()
+    $ribbonSrc = Join-Path $dir 'ChemForge.cuix'
+    if (-not (Test-Path $ribbonSrc)) { $ribbonSrc = $CuixSource }
+    if (Test-Path $ribbonSrc) {
+        $srcRibbon = Read-CuixEntry $ribbonSrc 'RibbonRoot.cui'
+        if ($srcRibbon) {
+            $tm = [regex]::Match($srcRibbon, '<RibbonTabSource\b[^>]*UID="([^"]+)"')
+            if ($tm.Success) { $ribbonTabId = $tm.Groups[1].Value }
+            $ribbonPanelIds = @([regex]::Matches($srcRibbon, '<RibbonPanelSource\b[^>]*UID="([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+        }
+    }
+    if ($ribbonPanelIds.Count -eq 0) { return $false }
 
-    $block = [regex]::Match($pop, '<PopMenu\b[^>]*UID="' + $rootUid + '">[\s\S]*?</PopMenu>')
-    if (-not $block.Success) { return $false }
-    $am = [regex]::Match($block.Value, '<Alias>(POP\d+)</Alias>')
-    if (-not $am.Success) { return $false }
-
-    $curMacros = @([regex]::Matches($grp, '<MenuMacro\b[^>]*UID="ID_CF_[A-Za-z]+">[\s\S]*?</MenuMacro>') | ForEach-Object { $_.Value })
-    if ($curMacros.Count -ne $content.Macros.Count) { return $false }
-
-    # 沿用已挂载的那个别名来比较（不然会为了比较而重排别名，白白判成「不是最新」）
-    $want = New-FlatPopMenu $am.Groups[1].Value $content.Items
-    if ((Normalize-Xml $block.Value) -ne (Normalize-Xml $want)) { return $false }
-
-    $curMacroXml = ($curMacros | ForEach-Object { '    ' + $_.Trim() }) -join "`r`n"
-    $wantMacroXml = ($content.Macros | ForEach-Object { '    ' + $_.Trim() }) -join "`r`n"
-    if ((Normalize-Xml $curMacroXml) -ne (Normalize-Xml $wantMacroXml)) { return $false }
-
-    # 工作空间引用：每个 CUIx 过一遍与第 2 步完全相同的变换，只要有一个会变就重做
     foreach ($file in (Get-ChildItem $dir -File | Where-Object { $_.Name -match '\.(cuix|cui)$' -and $_.Name -ne 'PnP.bak.cuix' })) {
         $ws = Read-CuixEntry $file.FullName 'WorkspaceRoot.cui'
         if ($null -eq $ws) { continue }
         # 必须用 Normalize-Xml 比较：变换会插入 CRLF 与缩进，裸字符串比较对空白敏感，
         # 会把「语义完全相同」判成「需要重写」，升级跳过就永远不生效（2026-10-16 实测）。
-        if ((Normalize-Xml (Get-WorkspaceMounted $ws $content.RibbonTabId $content.RibbonPanelIds $false $host_.Group)) -ne (Normalize-Xml $ws)) { return $false }
+        if ((Normalize-Xml (Get-WorkspaceMounted $ws $ribbonTabId $ribbonPanelIds $false 'PNP')) -ne (Normalize-Xml $ws)) { return $false }
     }
-
-    $aliasOut.Value = $am.Groups[1].Value
     return $true
 }
 
+function Get-DefaultWorkspaceName([string]$dir) {
+    # 宿主 CUIx 里标了 DefaultWorkspace="true" 的工作空间名，就是 AutoCAD 在没设
+    # WSCURRENT 时会自动应用的那个；显式把它写进 WSCURRENT，等于让它按名字应用一次。
+    foreach ($f in @('acad.CUIX', 'PnP.cuix')) {
+        $p = Join-Path $dir $f
+        if (-not (Test-Path $p)) { continue }
+        $ws = Read-CuixEntry $p 'WorkspaceRoot.cui'
+        if (-not $ws) { continue }
+        $m = [regex]::Match($ws, '<Workspace\b[^>]*DefaultWorkspace="true"[^>]*>[\s\S]{0,800}?<Name[^>]*>([^<]+)</Name>')
+        if ($m.Success) { return $m.Groups[1].Value.Trim() }
+    }
+    return ''
+}
+
+function Update-ProfileWorkspaceCurrent([bool]$uninstall, [string]$dir) {
+    # 2026-10-24：安装/卸载全程不启动 CAD、不抢焦点（用户明确要求）。
+    # 宿主的规矩是「启动时 WSCURRENT 有值 → 按该工作空间名应用引用」；为空时只恢复
+    # 上一次会话快照，CUIx 里新写的 WSRibbonTabSourceReference 不会被采用。
+    # 所以这里只做一件事：WSCURRENT 为空就补上默认工作空间名；卸载时还原。
+    $stateFile = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ChemForge\ws-current-orig.json'
+    $profilesRoot = 'HKCU:\Software\Autodesk\AutoCAD'
+
+    if ($uninstall) {
+        if (-not (Test-Path $stateFile)) { return }
+        $saved = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($p in $saved.PSObject.Properties) {
+            $g = Join-Path $p.Name 'General'
+            if (-not (Test-Path $g)) { continue }
+            Set-ItemProperty -Path $g -Name 'WSCURRENT' -Value ([string]$p.Value) -ErrorAction SilentlyContinue
+            Write-Output ("  {0}：WSCURRENT 已还原为 '{1}'" -f (Split-Path $p.Name -Leaf), $p.Value)
+        }
+        Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    $default = Get-DefaultWorkspaceName $dir
+    if (-not $default) { $default = '草图与注释' }
+    $saved = @{}
+    foreach ($ver in (Get-ChildItem $profilesRoot -ErrorAction SilentlyContinue)) {
+        foreach ($prod in (Get-ChildItem $ver.PSPath -ErrorAction SilentlyContinue)) {
+            $profiles = Join-Path $prod.PSPath 'Profiles'
+            if (-not (Test-Path $profiles)) { continue }
+            foreach ($prof in (Get-ChildItem $profiles -ErrorAction SilentlyContinue)) {
+                $g = Join-Path $prof.PSPath 'General'
+                if (-not (Test-Path $g)) { continue }
+                $cur = [string](Get-Item $g).GetValue('WSCURRENT')
+                if ($cur -and $cur.Trim()) { continue }
+                $saved[$prof.PSPath] = $cur
+                Set-ItemProperty -Path $g -Name 'WSCURRENT' -Value $default
+                Write-Output ("  {0}：WSCURRENT 原为空，已写为 '{1}'（下次启动由宿主自己应用工作空间引用）" -f $prof.PSChildName, $default)
+            }
+        }
+    }
+    if ($saved.Count -gt 0) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $stateFile) | Out-Null
+        ($saved | ConvertTo-Json) | Set-Content -Path $stateFile -Encoding UTF8
+    }
+}
 $touched = 0
 $skipped = 0
 $mountedAlias = ''      # 供第 3 步写/删配置文件布局条目使用
@@ -345,14 +373,12 @@ foreach ($dir in $supportDirs) {
     Write-Output ("  宿主 CUIX：{0}（菜单组 {1}）" -f $host_.Name, $hostGroup)
 
     # ---------- 0) 升级预检：内容已是最新就整目录跳过 ----------
-    # 升级（含同版本重装）时菜单内容通常一个字都没变，没必要重写 PnP.cuix、
+    # 升级（含同版本重装）时菜单内容通常一个字都没变，没必要重写 CUIx、
     # 更没必要在 %TEMP% 里堆一个备份目录。判据是内容，不是时间戳。
     if (-not $Uninstall) {
-        $upAlias = ''
-        if (Test-MountUpToDate $dir ([ref]$upAlias)) {
-            if ($upAlias) { $mountedAlias = $upAlias }
+        if (Test-MountUpToDate $dir) {
             $skipped++
-            Write-Output '  菜单内容已是最新，跳过重写与备份'
+            Write-Output '  功能区选项卡引用已是最新，跳过重写与备份'
             continue
         }
     }
@@ -390,51 +416,16 @@ foreach ($dir in $supportDirs) {
             Write-Output ("  {0}：已移除挂载菜单（原先存在={1}）" -f $host_.Name, $hadMounted)
         }
         else {
-            # 收割菜单项与宏（标签/命令单一来源）
-            $src = Join-Path $dir 'ChemForge.cuix'
-            if (-not (Test-Path $src)) { $src = $CuixSource }
-            if (-not (Test-Path $src)) { throw "找不到来源 CUIx（支持目录没有 ChemForge.cuix，也没有 $CuixSource）；请先启动一次 AutoCAD 让插件生成菜单文件。" }
-
-            # 这里刻意**不做**「来源比插件 DLL 新就警告」的自检：第 2 步重写工作空间时已经把来源
-            # ChemForge.cuix 的时间戳刷到了本次挂载时刻，此刻它必然比 DLL 新，判据恒真、只会制造噪音。
-            # 时间戳陷阱本身（以及改了菜单定义时的正确顺序）写在头部 .PARAMETER CuixSource；
-            # 真正的判据是下面打印的「菜单项 N 个」是否等于当前 MenuDefinition 的叶子项数。
-            $srcPop = Read-CuixEntry $src 'PopMenuRoot.cui'
-            $srcGrp = Read-CuixEntry $src 'MenuGroup.cui'
-            $items = @([regex]::Matches($srcPop, '<PopMenuItem\b[\s\S]*?</PopMenuItem>') | ForEach-Object { $_.Value })
-            $macros = @([regex]::Matches($srcGrp, '<MenuMacro\b[\s\S]*?</MenuMacro>') | ForEach-Object { $_.Value })
-            if ($items.Count -eq 0 -or $macros.Count -eq 0) { throw "来源 CUIx 里没有菜单项或宏：$src" }
-            for ($i = 0; $i -lt $items.Count; $i++) {
-                $items[$i] = [regex]::Replace($items[$i], 'MenuMacroID="ID_([A-Za-z]+)"', 'MenuMacroID="ID_CF_$1"')
-                $items[$i] = Remove-MenuImageRef $items[$i]
-            }
-            for ($i = 0; $i -lt $macros.Count; $i++) {
-                $macros[$i] = [regex]::Replace($macros[$i], 'UID="ID_([A-Za-z]+)"', 'UID="ID_CF_$1"')
-                $macros[$i] = Remove-MenuImageRef $macros[$i]
-            }
-
-            # 选一个 PNP 组里空闲的低位 <Alias>POPn</Alias>（n < 500）
-            $used = @([regex]::Matches($pop, '<Alias>POP(\d+)</Alias>') | ForEach-Object { [int]$_.Groups[1].Value } | Where-Object { $_ -lt 500 })
-            $aliasNo = 13
-            while ($used -contains $aliasNo) { $aliasNo++ }
-            $alias = 'POP' + $aliasNo
-            $mountedAlias = $alias
-            Write-Output ("  来源 {0}：菜单项 {1} 个、宏 {2} 个；使用别名 {3}" -f (Split-Path $src -Leaf), $items.Count, $macros.Count, $alias)
-            Write-Output ("    ↑ 请核对菜单项数 {0} = 当前 MenuDefinition 的叶子项数（对不上就是收割到了旧 CUIx，见头部 .PARAMETER CuixSource 的时间戳陷阱）" -f $items.Count)
-
-            $close = $pop.LastIndexOf('</PopMenuRoot>')
-            if ($close -lt 0) { throw ($host_.Name + ' PopMenuRoot.cui 结构异常') }
-            $pop = $pop.Substring(0, $close) + (New-FlatPopMenu $alias $items) + $pop.Substring($close)
-
-            $grpClose = $grp.IndexOf('</MacroGroup>')
-            if ($grpClose -lt 0) { throw ($host_.Name + ' MenuGroup.cui 里找不到 </MacroGroup>') }
-            $macroXml = ($macros | ForEach-Object { '    ' + $_.Trim() }) -join "`r`n"
-            $grp = $grp.Substring(0, $grpClose) + $macroXml + "`r`n  " + $grp.Substring($grpClose)
-
-            $touched++
-            Set-ZipEntryText $zip 'PopMenuRoot.cui' $pop
-            Set-ZipEntryText $zip 'MenuGroup.cui' $grp
-            Write-Output ("  {0}：已写入扁平菜单 {1}（{2} 项含分隔线）与 {3} 个宏" -f $host_.Name, $menuTitle, ($items.Count + $separatorBefore.Count), $macros.Count)
+            # 2026-10-23 定案：扁平菜单挂载已**废弃**。经典菜单栏的正确机制（本机 AutoCAD
+            # 2025 逐条实测定案，缺一不可）是——CHEMFORGE 局部菜单（ChemForge.cuix，插件
+            # 运行时生成）+ 根菜单 POP16 别名 + Register-ChemForgeMenu.ps1 写进宿主 CUIx
+            # 每个工作空间的 <WSPop MenuGroup="CHEMFORGE" pUID="ID_ChemForgeMenu">。
+            # 关键事实：① POPn 别名只在 CUIx 加载那一刻自动上栏，切工作空间重建菜单栏
+            # 时按 WSPop 列表来，缺引用就掉；② 根菜单子项全是 <PopMenuRef> 时 AutoCAD
+            # 2025 永远不画（模型在、画面不渲染），必须扁平直挂 PopMenuItem。
+            # 故本脚本不再向宿主组写扁平菜单与宏（避免菜单栏出现第二个 ChemForge），
+            # 安装侧只保留下方第 1b/2 步的功能区选项卡工作空间引用。
+            Write-Output '  扁平菜单挂载已废弃（2026-10-23）：经典菜单栏由 CHEMFORGE 局部菜单 + POP16 + Register 的 WSPop 负责，本脚本跳过写宿主组。'
         }
     }
     finally { $zip.Dispose() }
@@ -526,26 +517,23 @@ foreach ($ver in (Get-ChildItem $profilesRoot -ErrorAction SilentlyContinue)) {
                 }
             }
             else {
-                if (-not $mountedAlias) { continue }
-                $num = ($mountedAlias -replace '\D', '')
-                $want = '^' + [regex]::Escape($regGroup) + '\s+pop' + $num + '$'
-                $keyItem = Get-Item $key
-                $existing = @($keyItem.GetValueNames() | Where-Object { $_ -notmatch '^Pop5\d\d$' -and $keyItem.GetValue($_) -match $want })
-                if ($existing.Count -gt 0) {
-                    Write-Output ("  {0}：布局条目已存在（{1} = {2} pop{3}），跳过" -f $prof.PSChildName, ($existing -join ','), $regGroup, $num)
-                }
-                else {
-                    $slot = 'Pop' + ($maxSlot + 1)
-                    Set-ItemProperty -Path $key -Name $slot -Value ($regGroup + ' pop' + $num)
-                    Write-Output ("  {0}：写入布局条目 {1} = {2}" -f $prof.PSChildName, $slot, (Get-Item $key).GetValue($slot))
-                }
+                # 2026-10-23：安装侧不再写配置文件布局条目。注册表 Menus 只是 AutoCAD
+                # 自己维护的镜像（本机实测：每次启动/切工作空间都被重写），脚本写入既
+                # 无源作用又会与自动机制抢键值；经典菜单栏的持久化由 WSPop 保证。
+                # 保留上方两条清理：历史 CHEMFORGE 连续块条目（迁移）与卸载清理。
+                continue
             }
         }
     }
 }
 
-Write-Output ''
-$skipNote = ''
+# ---------- 4) 工作空间触发：只改注册表，不启动 CAD、不碰界面 ----------
+# 见 Update-ProfileWorkspaceCurrent 的注释：WSCURRENT 为空时宿主不会应用工作空间引用。
+$firstDir = ''
+if ($supportDirs -and $supportDirs.Count -gt 0) { $firstDir = $supportDirs[0] }
+Update-ProfileWorkspaceCurrent ([bool]$Uninstall) $firstDir
+
+Write-Output ''$skipNote = ''
 if ($skipped -gt 0) { $skipNote = ("，{0} 个目录内容已是最新、原样跳过" -f $skipped) }
 if ($Uninstall) {
     Write-Output ("已撤销 ChemForge 菜单挂载（改动 {0} 个文件{1}）" -f $touched, $skipNote)
