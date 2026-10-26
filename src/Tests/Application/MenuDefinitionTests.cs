@@ -8,7 +8,7 @@ namespace ChemForge.Tests.Application
 {
     /// <summary>
     /// MenuDefinition 单元测试
-    /// （Express 风格菜单：原始中文分组/命令名 + \t 右侧全角空格留白加宽，无英文提示）
+    /// （菜单项标题 = 原始中文名，无 \t 留白、无括号说明；宽度由 AutoCAD 按最长标签自动撑开）
     /// </summary>
     [TestClass]
     public sealed class MenuDefinitionTests
@@ -52,17 +52,15 @@ namespace ChemForge.Tests.Application
         }
 
         [TestMethod]
-        public void GroupTitles_UseRightWhitespaceForWidth()
+        public void GroupTitles_HaveNoPadding()
         {
-            // 加宽方式：\t 后为全角空格留白，而非任何文字/英文提示
+            // 2026-10-26：不再用 \t + 全角空格把菜单撑宽，宽度交给 AutoCAD 按最长标签自动撑开
             foreach (var menu in MenuDefinition.Menus)
             {
-                int tab = menu.Title.IndexOf('\t');
-                Assert.IsTrue(tab > 0, $"分组「{menu.DisplayTitle}」标题应包含 \\t 留白段。");
-                string right = menu.Title.Substring(tab + 1);
-                Assert.IsTrue(right.Length >= 4, $"分组「{menu.DisplayTitle}」右侧留白不足。");
-                Assert.IsTrue(right.All(c => c == '\u3000' || c == ' '),
-                    $"分组「{menu.DisplayTitle}」\t 后只能是空白字符（当前含非空白：{right}）。");
+                Assert.AreEqual(menu.DisplayTitle, menu.Title);
+                Assert.IsFalse(menu.Title.Contains("\t"), $"分组「{menu.DisplayTitle}」标题不应再含 \\t 留白。");
+                Assert.IsFalse(menu.Title.Contains('\u3000'), $"分组「{menu.DisplayTitle}」标题不应含全角空格。");
+                Assert.AreEqual(menu.Title.Trim(), menu.Title, $"分组「{menu.DisplayTitle}」标题不应有首尾空白。");
             }
         }
 
@@ -87,7 +85,7 @@ namespace ChemForge.Tests.Application
 
             // 批量修改块属性。命令名 BLKATTCHANGE = BLocK + ATTribute + CHANGE。
             // 「统一块名」（RENBLK）与「图块统计」（BLKCNT）尚未实现，已从菜单中移除。
-            Assert.AreEqual("批量修改块属性（内容 / 文字选项 / 特性）", items[0].DisplayTitle);
+            Assert.AreEqual("批量修改块属性", items[0].DisplayTitle);
             Assert.AreEqual("BLKATTCHANGE ", items[0].Macro);
         }
 
@@ -97,7 +95,7 @@ namespace ChemForge.Tests.Application
             var items = MenuDefinition.Menus[2].Children;
             Assert.AreEqual(1, items.Count);
 
-            Assert.AreEqual("属性块批量编号（先弹窗，再两步选块）", items[0].DisplayTitle);
+            Assert.AreEqual("属性块批量编号", items[0].DisplayTitle);
             Assert.AreEqual("BLKNUM ", items[0].Macro);
 
             // 两条命令只登记、不进菜单（它们没有菜单项）：
@@ -113,13 +111,13 @@ namespace ChemForge.Tests.Application
             var items = MenuDefinition.Menus[3].Children;
             Assert.AreEqual(2, items.Count);
 
-            Assert.AreEqual("管线自动打断（缺口 / 半圆架桥）", items[0].DisplayTitle);
+            Assert.AreEqual("管线自动打断", items[0].DisplayTitle);
             // 管线打断命令名即 PIPEBREAK（历史命令名，无别名）
             Assert.AreEqual("PIPEBREAK ", items[0].Macro);
 
             // 仪表线自动打断：与管线打断同引擎，差别是图层点选两次、固定打断仪表线，
             // 因此不询问缺口方向。命令名 INSTBREAK = INSTRument + BREAK。
-            Assert.AreEqual("仪表线自动打断（缺口 / 半圆架桥）", items[1].DisplayTitle);
+            Assert.AreEqual("仪表线自动打断", items[1].DisplayTitle);
             Assert.AreEqual("INSTBREAK ", items[1].Macro);
 
             // 仪表块自动编号（TAGNO）2026-10-14 从菜单与功能区摘掉：业务尚未实现
@@ -140,27 +138,26 @@ namespace ChemForge.Tests.Application
             Assert.IsFalse(items[0].IsCommand);
             Assert.AreEqual(string.Empty, items[0].Title);
 
-            Assert.AreEqual("关于 ChemForge（版本信息）", items[1].DisplayTitle);
+            Assert.AreEqual("关于 ChemForge", items[1].DisplayTitle);
             Assert.AreEqual("CHEMFORGE ", items[1].Macro);
             Assert.IsTrue(items[1].IsCommand);
         }
 
         [TestMethod]
-        public void CommandTitles_UseRightWhitespaceNotEnglishHint()
+        public void CommandTitles_ArePlainChineseNames()
         {
-            // 命令项标题：纯中文名 + \t + 全角空格留白；不得出现英文命令名提示
+            // 命令项标题：纯名称，不带 \t 留白、不带括号说明、不带英文命令名提示
             var commands = new List<MenuItemDefinition>();
             CollectCommands(MenuDefinition.Menus, commands);
 
             foreach (var command in commands)
             {
-                int tab = command.Title.IndexOf('\t');
-                Assert.IsTrue(tab > 0, $"命令项「{command.DisplayTitle}」标题应包含 \\t 留白段。");
-                string right = command.Title.Substring(tab + 1);
-                Assert.IsTrue(right.Length >= 4, $"命令项「{command.DisplayTitle}」右侧留白不足。");
-                Assert.IsTrue(right.All(c => c == '\u3000' || c == ' '),
-                    $"命令项「{command.DisplayTitle}」\t 后只能是空白字符，不得有英文/文字提示。");
                 Assert.IsFalse(string.IsNullOrEmpty(command.DisplayTitle));
+                Assert.AreEqual(command.DisplayTitle, command.Title);
+                Assert.IsFalse(command.Title.Contains("\t"), $"命令项「{command.DisplayTitle}」标题不应再含 \\t 留白。");
+                Assert.IsFalse(command.Title.Contains('\u3000'), $"命令项「{command.DisplayTitle}」标题不应含全角空格。");
+                Assert.IsFalse(command.Title.Contains("（") || command.Title.Contains("("),
+                    $"命令项「{command.DisplayTitle}」标题不应带括号说明。");
             }
         }
 

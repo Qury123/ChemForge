@@ -141,6 +141,14 @@ $scenarios = @(
         Fixture = 'Fixture.lsp'
     }
     [ordered]@{
+        Id      = 'instbreak-scurve'
+        Name    = 'INSTBREAK S 型模式（5 点样条/默认符号宽度）'
+        Command = 'INSTBREAK'
+        Input   = @('200', 'S', '', '', '', 'All', '')
+        Check   = 'Check-InstBreakSCurve.lsp'
+        Fixture = 'Fixture.lsp'
+    }
+    [ordered]@{
         Id      = 'pipebreak-regression'
         Name    = 'PIPEBREAK 回归（单图层/缺口/垂直）'
         Command = 'PIPEBREAK'
@@ -155,6 +163,69 @@ $scenarios = @(
         Input   = @('100', 'D', 'H', '', 'All', '')
         Check   = 'Check-PipeBreakRegressionH.lsp'
         Fixture = 'Fixture.lsp'
+    }
+    [ordered]@{
+        Id      = 'pipebreak-scurve'
+        Name    = 'PIPEBREAK S 型模式（单图层/垂直管/5 点样条/默认符号宽度）'
+        Command = 'PIPEBREAK'
+        Input   = @('100', 'S', 'V', '', '', 'All', '')
+        Check   = 'Check-PipeBreakSCurve.lsp'
+        Fixture = 'Fixture.lsp'
+        # 回车用默认值（= 缺口宽度）不应写记忆
+        ExpectSCurveWidth = 'absent'
+    }
+    [ordered]@{
+        Id      = 'pipebreak-scurve-width'
+        Name    = 'PIPEBREAK S 型模式（符号宽度单独指定 50）'
+        Command = 'PIPEBREAK'
+        Input   = @('100', 'S', 'V', '50', '', 'All', '')
+        Check   = 'Check-PipeBreakSCurveWidth.lsp'
+        Fixture = 'Fixture.lsp'
+        # 用户自己输的数要记下来
+        ExpectSCurveWidth = '50'
+    }
+    [ordered]@{
+        Id      = 'pipebreak-scurve-memory'
+        Name    = 'PIPEBREAK S 型模式（回车沿用记忆的符号宽度 50）'
+        Command = 'PIPEBREAK'
+        Input   = @('100', 'S', 'V', '', '', 'All', '')
+        Check   = 'Check-PipeBreakSCurveWidth.lsp'
+        Fixture = 'Fixture.lsp'
+        Seed    = @('LastSCurveWidth=50')
+        # 回车接受记忆值，记忆保持不变
+        ExpectSCurveWidth = '50'
+    }
+    [ordered]@{
+        Id      = 'instbreak-bridge-memory'
+        Name    = 'INSTBREAK 架桥模式（回车沿用记忆的模式 H）'
+        Command = 'INSTBREAK'
+        Input   = @('200', '', 'U', '', '', 'All', '')
+        Check   = 'Check-InstBreakBridge.lsp'
+        Fixture = 'Fixture.lsp'
+        Seed    = @('LastMode=H')
+        ExpectMode = 'H'
+    }
+    [ordered]@{
+        Id      = 'pipebreak-dir-memory'
+        Name    = 'PIPEBREAK 缺口模式（回车沿用记忆的缺口方向 H）'
+        Command = 'PIPEBREAK'
+        Input   = @('100', '', '', '', 'All', '')
+        Check   = 'Check-PipeBreakRegressionH.lsp'
+        Fixture = 'Fixture.lsp'
+        Seed    = @('LastMode=D', 'LastGapDirection=H')
+        ExpectMode = 'D'
+        ExpectGapDirection = 'H'
+    }
+    [ordered]@{
+        Id      = 'instbreak-bridge-side-memory'
+        Name    = 'INSTBREAK 架桥模式（回车沿用记忆的凸起方向 D）'
+        Command = 'INSTBREAK'
+        Input   = @('200', '', '', '', '', 'All', '')
+        Check   = 'Check-InstBreakBridgeDown.lsp'
+        Fixture = 'Fixture.lsp'
+        Seed    = @('LastMode=H', 'LastBridgeSide=D')
+        ExpectMode = 'H'
+        ExpectBridgeSide = 'D'
     }
     [ordered]@{
         Id      = 'pipebreak-tjunction'
@@ -172,12 +243,32 @@ $scenarios = @(
 $settingsBackupBytes = $null
 if (Test-Path $settingsPath) { $settingsBackupBytes = [System.IO.File]::ReadAllBytes($settingsPath) }
 New-Item -ItemType Directory -Force -Path (Split-Path $settingsPath) | Out-Null
-Write-Utf8NoBom $settingsPath @'
-# temporary, written by Run-IntegrationTests.ps1; restored when the script ends
-LastWidth=200
-LastPipeLayer=PIPE
-LastInstrumentLayer=INST
-'@
+
+# 每个场景开跑前重写一份干净的记忆文件：场景之间互不影响（尤其是 S 型符号宽度的记忆）。
+# Seed 里可以追加临时记忆项，用来验证「回车沿用记忆值」。
+$settingsSeed = @(
+    '# temporary, written by Run-IntegrationTests.ps1; restored when the script ends'
+    'LastWidth=200'
+    'LastPipeLayer=PIPE'
+    'LastInstrumentLayer=INST'
+)
+
+function Reset-Settings([string[]]$extra) {
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $settingsSeed) { $lines.Add($line) }
+    if ($extra) { foreach ($line in $extra) { $lines.Add($line) } }
+    Write-Utf8NoBom $settingsPath ($lines -join "`r`n")
+}
+
+function Read-SettingValue([string]$key) {
+    if (-not (Test-Path $settingsPath)) { return $null }
+    foreach ($line in [System.IO.File]::ReadAllLines($settingsPath)) {
+        if ($line -match ('^' + [regex]::Escape($key) + '=(.*)$')) { return $Matches[1].Trim() }
+    }
+    return $null
+}
+
+Reset-Settings $null
 
 $tempRoot = Join-Path $env:TEMP ('cf_e2e_' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -191,6 +282,10 @@ $exitCode = 0
 
 try {
     foreach ($scenario in $scenarios) {
+        # 每个场景都从一份干净的记忆文件开始（Seed 可预置记忆值）
+        $seed = if ($scenario.Contains('Seed')) { $scenario.Seed } else { $null }
+        Reset-Settings $seed
+
         $dir = Join-Path $tempRoot $scenario.Id
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -256,6 +351,39 @@ try {
         }
 
         $ok = $summarySeen -and $fail -eq 0 -and $finished
+
+                # 记忆文件断言：settings 由 PowerShell 侧直接读，不进 CAD
+        # 'absent' = 这个键不该出现；其他字符串则必须等于该值
+        foreach ($probe in @(
+            @{ Field = 'ExpectSCurveWidth';  Key = 'LastSCurveWidth';  Label = 'S 型符号宽度' },
+            @{ Field = 'ExpectMode';         Key = 'LastMode';         Label = '打断模式' },
+            @{ Field = 'ExpectGapDirection'; Key = 'LastGapDirection'; Label = '缺口方向' }
+            @{ Field = 'ExpectBridgeSide'; Key = 'LastBridgeSide';   Label = '架桥凸起方向' }
+        )) {
+            if (-not $scenario.Contains($probe.Field)) { continue }
+            $expect = $scenario[$probe.Field]
+            $actual = Read-SettingValue $probe.Key
+            if ($expect -eq 'absent') {
+                if ($null -eq $actual) {
+                    $pass++
+                    Write-Host ("  [settings] {0} 未写入（符合预期：默认值不记忆）" -f $probe.Key)
+                } else {
+                    $fail++
+                    $ok = $false
+                    Write-Host ("  [settings] {0}={1}，预期不应写入" -f $probe.Key, $actual) -ForegroundColor Red
+                }
+            } else {
+                if ($actual -eq $expect) {
+                    $pass++
+                    Write-Host ("  [settings] {0}={1}（{2}，符合预期）" -f $probe.Key, $actual, $probe.Label)
+                } else {
+                    $fail++
+                    $ok = $false
+                    Write-Host ("  [settings] {0}={1}，预期 {2}" -f $probe.Key, $actual, $expect) -ForegroundColor Red
+                }
+            }
+        }
+
         if (-not $ok) { $exitCode = 1 }
         if (-not $summarySeen) {
             Write-Host '  [error] 没有拿到 ##CF## SUMMARY：命令可能没跑完或插件没加载。' -ForegroundColor Red

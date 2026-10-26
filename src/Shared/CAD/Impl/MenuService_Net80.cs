@@ -310,6 +310,36 @@ namespace ChemForge.CAD.Impl
 
                     if (!actual.SetEquals(expected)) return true;
 
+                    // 文本判据（2026-10-26）：只比别名时，改标题不改别名（例如把
+                    // "管线自动打断（缺口 / 半圆架桥）" 简化成 "管线自动打断"）会被判成
+                    // "不用重建"，界面永远显示旧名字。这里把 MenuMacro 的 <Name> 文本
+                    // 与 DisplayTitle 集合再比一遍。
+                    var expectedTitles = new HashSet<string>(StringComparer.Ordinal);
+                    CollectCommandTitles(MenuDefinition.Menus, expectedTitles);
+                    var actualTitles = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (System.Text.RegularExpressions.Match nameMatch in
+                             System.Text.RegularExpressions.Regex.Matches(xml, "<Name[^>]*>([^<]*)</Name>"))
+                    {
+                        // CUIx 里标题是 XML 转义过的（&amp; 等），先还原再比，
+                        // 否则标题里带 & 的项会永远判成"不一致"、每次启动都重建
+                        actualTitles.Add(System.Net.WebUtility.HtmlDecode(nameMatch.Groups[1].Value));
+                    }
+
+                    if (!actualTitles.SetEquals(expectedTitles))
+                    {
+                        Logger.Info("检测到菜单项标题与 MenuDefinition 不一致，重新生成菜单文件。");
+                        return true;
+                    }
+
+                    // 图标判据（2026-10-26）：只给"关于 ChemForge"加了下拉菜单小图标，
+                    // 旧文件的 SmallImage 是空的；只比别名与标题都不会触发重建，图标
+                    // 就永远不出现。这里单独确认 About 宏的 SmallImage 已写上文件名。
+                    if (!HasAboutSmallImage(xml))
+                    {
+                        Logger.Info("检测到「关于 ChemForge」缺少下拉菜单图标，重新生成菜单文件。");
+                        return true;
+                    }
+
                         // 结构判据（2026-10-23 扁平化改造）：旧版文件根菜单用 <PopMenuRef>
                         // 级联引用 5 个子菜单，AutoCAD 2025 实测这种弹出菜单**永远不画到
                         // 菜单栏**（COM 模型 OnMenuBar=True、画面不渲染）；新版文件根菜单
@@ -360,9 +390,54 @@ namespace ChemForge.CAD.Impl
         }
 
         /// <summary>
+        /// 递归收集 MenuDefinition 里所有命令项的显示名（即写进 CUIx &lt;Name&gt; 的文本，
+        /// 子菜单节点与分隔线不算），用于判断标题改动后是否需要重建菜单文件。
+        /// </summary>
+        private static void CollectCommandTitles(IEnumerable<MenuItemDefinition> items, HashSet<string> into)
+        {
+            if (items == null) return;
+            foreach (var item in items)
+            {
+                if (item == null) continue;
+                if (item.IsCommand) into.Add(item.DisplayTitle);
+                CollectCommandTitles(item.Children, into);
+            }
+        }
+
+        /// <summary>
+        /// 检查 CUIx 里「关于 ChemForge」的菜单宏是否带了下拉菜单小图标。
+        /// 只读 XML 文本，不加载 CUI：判据是 <c>&lt;MenuMacro UID="ID_About"&gt;</c>
+        /// 之后第一处 <c>&lt;SmallImage Name="..." /&gt;</c> 的 Name 等于宿主内置资源名
+        /// <c>RCDATA_16_ABOUT</c>（2026-10-26 实测：写成 png 文件名时下拉菜单里不画，
+        /// 因此这里只认资源名；旧版本写下的文件名会被判成"没图标"并触发重建）。
+        /// </summary>
+        private static bool HasAboutSmallImage(string xml)
+        {
+            const string aboutMarker = "<MenuMacro UID=\"ID_About\"";
+            int at = xml.IndexOf(aboutMarker, StringComparison.Ordinal);
+            if (at < 0) return false;
+
+            const string imageMarker = "<SmallImage Name=\"";
+            int imageAt = xml.IndexOf(imageMarker, at, StringComparison.Ordinal);
+            if (imageAt < 0) return false;
+
+            // 不能误读到下一条菜单宏的 SmallImage：About 的宏里就该有，且位置在下一个
+            // <MenuMacro 之前
+            int nextMacro = xml.IndexOf("<MenuMacro ", at + aboutMarker.Length, StringComparison.Ordinal);
+            if (nextMacro >= 0 && imageAt > nextMacro) return false;
+
+            int valueStart = imageAt + imageMarker.Length;
+            int valueEnd = xml.IndexOf('"', valueStart);
+            if (valueEnd <= valueStart) return false;
+
+            string value = xml.Substring(valueStart, valueEnd - valueStart).Trim();
+            return string.Equals(value, "RCDATA_16_ABOUT", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// 依据 MenuDefinition 生成 CUIx 菜单文件。
-        /// 注意：CUIx 标识符（菜单/宏名）一律用纯显示名 DisplayTitle，
-        /// 显示标签才保留 \t 留白（\t 进入标识符会导致"不能加载菜单项"）
+        /// 注意：CUIx 标识符（菜单/宏名）与显示标签一律用纯显示名 DisplayTitle
+        /// （2026-10-26 起标题里不再有 \t 留白，菜单宽度由 AutoCAD 按最长标签自动撑开）
         ///
         /// 生成内容（2026-10-23 扁平化定案）：
         ///  1. 菜单栏根菜单带**两个**别名：ID_ChemForgeMenu（工作空间 WSPop 按 pUID 引用）
@@ -464,10 +539,21 @@ namespace ChemForge.CAD.Impl
                     // 宏的图片只能经 CreateMenuMacro 的 smallImage/largeImage 传入
                     // （"图片资源 ID 或文件名"）；这里给文件名，图标由 RibbonBuilder
                     // 从嵌入资源释放到 CUIx 同目录，失败则为 null（按钮退化为纯文字）。
-                    // 小图标（smallImage）刻意不传：它只作用于经典下拉菜单项前面的图案，
-                    // 用户明确不要（2026-10-23 截图反馈）；功能区大按钮用 largeImage，
-                    // 不受影响。同一宏同时供菜单项与功能区按钮引用，故不能只删图片文件。
-                    var smallIcon = (string)null;
+                    // 小图标（smallImage）只作用于经典下拉菜单项前面的图案：2026-10-23
+                    // 用户明确不要满屏小图案，所以默认不传。2026-10-26 例外放行
+                    // "关于 ChemForge" 一项——参照 AutoCAD 帮助菜单里"关于(A)"前面那枚
+                    // 图标，下拉菜单里给它一个 16×16 的 about_16.png。
+                    // 功能区大按钮用的是 largeImage，不受这里影响。
+                    // 经典下拉菜单项前面的图案**只认宿主内置的资源 ID**：2026-10-26
+                    // 实测同名 png 文件引用（chemforge_about_16.png）会被写进 CUIx、
+                    // 功能区也能用，但下拉菜单里不画；而 acad.cuix 里这些项全是
+                    // "RCDATA_16_ABOUT" 这种资源名（整份 CUIx 里没有一个 png）。
+                    // 因此这里直接借用帮助菜单「关于(A)」那一枚内置图标。
+                    var isAbout = string.Equals(
+                        commandDefinition.Macro == null ? null : commandDefinition.Macro.Trim(),
+                        CommandNames.ChemForge,
+                        StringComparison.OrdinalIgnoreCase);
+                    var smallIcon = withIcons && isAbout ? "RCDATA_16_ABOUT" : null;
                     var largeIcon = withIcons
                         ? RibbonBuilder.EnsureIconFile(commandDefinition.Macro, 32, cuixDirectory)
                         : null;

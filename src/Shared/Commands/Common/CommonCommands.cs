@@ -23,25 +23,15 @@ namespace ChemForge.Commands.Common
             try
             {
                 var version = GetVersionText();
-                var message = "ChemForge · 工艺匠造工坊 v" + version + "\n"
-                              + "锻造化工工艺，精绘设计蓝图\n"
-                              + "Copyright © 2026 ChemForge Contributors. 保留所有权利。";
 
-                // AutoCAD 没有控制台宿主，Console.WriteLine 用户永远看不到；
-                // 有活动文档时写到命令行
-                var document = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                if (document != null)
-                {
-                    document.Editor.WriteMessage("\n" + message + "\n");
-                }
-
-                // 命令行之外再弹窗（点「关于 ChemForge（版本信息）」要能看到窗口与版权信息）。
-                // Net80 / Net48 用自绘对话框（有标题与排版）；其余目标框架没有 WinForms 宿主，
-                // 退化为原生提示框。
+                // 2026-10-26 用户要求：点「关于 ChemForge」只弹窗，命令行不再输出版权信息
+                // （命令行那几行和窗口内容是重复的，只留窗）。无界面宿主没有窗口可弹，
+                // 才退化成命令行一行，否则那里什么也看不到。
 #if NET80 || NET48
                 // 界面判断必须在弹窗之前：ShowModalDialog 由 AcWindows.dll 实现，
                 // 无界面宿主（accoreconsole 等）里这次加载会在方法体执行之前直接 AV 崩进程，
                 // 那种崩溃在托管代码里 catch 不到。详见 CommandHost.ShowDialogSafely 的说明。
+                var document = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 if (!CommandHost.HasUserInterface(out string reason))
                 {
                     if (document != null)
@@ -49,8 +39,8 @@ namespace ChemForge.Commands.Common
                         try
                         {
                             document.Editor.WriteMessage(
-                                "\n无法显示 ChemForge 关于窗口：" + reason
-                                + "\n版本信息已在上方命令行输出。");
+                                "\nChemForge · 工艺匠造工坊 v" + version
+                                + "\n（当前宿主没有用户界面，无法显示关于窗口：" + reason + "）\n");
                         }
                         catch (System.Exception)
                         {
@@ -65,6 +55,9 @@ namespace ChemForge.Commands.Common
                     CommandHost.ShowDialogSafely(dialog);
                 }
 #else
+                var message = "ChemForge · 工艺匠造工坊 v" + version + "\n"
+                              + "锻造化工工艺，精绘设计蓝图\n"
+                              + "Copyright © 2026 ChemForge Contributors. 保留所有权利。";
                 Autodesk.AutoCAD.ApplicationServices.Application.ShowAlertDialog(message);
 #endif
             }

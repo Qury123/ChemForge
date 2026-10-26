@@ -37,10 +37,10 @@ ChemForge
 ├──────────────（分隔线）
 ├── 属性块批量编号              → BLKNUM
 ├──────────────（分隔线）
-├── 管线自动打断（缺口/半圆架桥）→ PIPEBREAK
-├── 仪表线自动打断（缺口/半圆架桥）→ INSTBREAK
+├── 管线自动打断 → PIPEBREAK
+├── 仪表线自动打断 → INSTBREAK
 ├──────────────（分隔线）
-└── 关于 ChemForge（版本信息）  → CHEMFORGE
+└── 关于 ChemForge  → CHEMFORGE
 
 「统一块名」（RENBLK）与「图块统计」（BLKCNT）尚未实现，
 已从菜单、功能区与命令清单中移除。

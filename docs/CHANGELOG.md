@@ -5,6 +5,71 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.2.2] - 2026-10-26
+
+### Changed
+- **菜单与功能区去掉括号说明、按最长标签自适应宽度**：`批量修改块属性（内容 / 文字选项 / 特性）` → `批量修改块属性`，
+  `属性块批量编号（先弹窗，再两步选块）` → `属性块批量编号`，`关于 ChemForge（版本信息）` → `关于 ChemForge`，
+  连同上一轮已去掉的 `管线自动打断（缺口 / 半圆架桥）` / `仪表线自动打断（缺口 / 半圆架桥）`，菜单里不再有任何括号说明。
+  标题里的 `\t` + 全角空格留白也一并清掉（`DisplayTitle` 早就把它们剥掉了，属于死代码）；
+  下拉菜单宽度本来就跟最长的一行文字走，括号说明去掉后标签变短，菜单自然跟着变窄——
+  不需要再靠留白撑宽（`MenuDefinitionTests.GroupTitles_HaveNoPadding` / `CommandTitles_ArePlainChineseNames` 守住这条约束）。
+  CUIx 里存的是 `DisplayTitle`，标题变化会自动触发重建。
+- **「关于 ChemForge」加下拉菜单小图标、命令不再往命令行刷内容**：经典下拉菜单里这一项
+  前面现在显示 16×16 的 about 图标（参照 AutoCAD 帮助菜单里「关于(A)」前面那枚 ⓘ），
+  做法是只给这一条菜单宏传 `smallImage`（其余命令仍然刻意不给小图标，`MenuService_Net80`
+  里 2026-10-23 那条约定继续管着它们）。点「关于 ChemForge」只弹窗口，命令行不再重复
+  打印版本号与版权信息；只有无界面宿主（`accoreconsole` 等）没有窗口可弹时才退化成一命令行提示。
+  `MenuFileNeedsRebuild` 补一条图标判据：`ID_About` 宏的 `<SmallImage>` 不等于
+  `RCDATA_16_ABOUT` 就触发重建，旧 CUIx 里的空图标不会赖着不走。
+  实测（AutoCAD 2025 真机）：`<SmallImage Name="chemforge_about_16.png"/>` 这种**文件名**引用
+  画不出来（`acad.cuix` 里全部是 `RCDATA_16_*` 这类资源名，没有一件 png）；换成资源名
+  `RCDATA_16_ABOUT` 才在菜单里画出图标。**下拉菜单只认资源 ID，不认散图文件名**——
+  与功能区按钮（走 `RibbonBuilder.EnsureIconFile` 落盘 png）是两套机制。
+
+### Added
+- **管线打断新增「S 型」模式（`PIPEBREAK` / `INSTBREAK` 通用）**
+  模式提示由 `选择模式 [缺口(D)/架桥(H)]` 改为 `选择模式 [缺口(D)/架桥(H)/S型(S)]`；
+  `S` 型符号左右对称，凸起朝向不改变形状，因此**不再追问凸起方向**（`U/D/L/R` 只保留给架桥）。
+  做法是在**断线的基础上画样条**：缺口仍按原规则切出来，然后在**每个断点**处画一个 S 形
+  「断线符号」（`PipeBreakEngine.CreateSCurveSpline`）：
+  ① 波长方向**横跨管线**（垂直于管线，总长 = 缺口宽度 W，±W/2）；
+  ② 振幅沿**管线方向** ±W/8，峰谷落在跨度的 1/4 与 3/4 处；
+  ③ 中点正好落在断点上，与原管线端点相接，一个断点一个符号；
+  ④ 每个符号用**一条 5 拟合点的 `SPLINE`**（P0-P1-P2-P3-P4）——与手工 `SPLINE` 连这五点
+      同构，实测与参考图像素平均偏差 1.8px / 最大 3.5px。
+  样条用 `KnotParameterizationEnum.Chord`、3 次构造——与手工 `SPLINE` 命令结果逐点一致
+  （已用 Core Console 实测比对控制点与节点向量），不做端点切线约束。
+  选完缺口方向后会再问一次「**S 型符号宽度**」（`PipeBreakEngine.PromptSCurveWidth`）：
+  默认等于缺口/架桥宽度，直接回车即沿用；单独给值时**只改符号大小、不改缺口宽度**，
+  符号内部比例固定（跨度 = W、振幅 = W/8），因此只要定下宽度，形状就唯一确定了。
+  **记忆规则**：只有用户自己输入了跟缺口宽度不同的数才会写进 `PipeBreak.settings` 的
+  `LastSCurveWidth`，下次选 S 型时作为默认值（提示里写成「回车沿用上次 50」）；
+  直接回车用的默认值不记忆；输回缺口宽度视为恢复默认并清掉记忆。
+  **模式与方向也记忆**：`选择模式` 与 `PIPEBREAK` 的 `选择缺口方向` 都以「上次选的那个」为默认值
+  （`LastMode` / `LastGapDirection`），直接回车就沿用上次的选择；`INSTBREAK` 没有缺口方向这一步，
+  只记忆模式。架桥的 `U/D/L/R` 凸起朝向同样记忆（`LastBridgeSide`，`PIPEBREAK` 与 `INSTBREAK`
+  共用），回车即沿用上次朝向；与宽度不同，朝向没有"恢复默认"的概念，显式选择才写盘。
+  既有缺口 / 架桥行为不变。
+
+### Changed
+- **菜单与功能区的功能名去掉模式说明**：`管线自动打断（缺口 / 半圆架桥）` → `管线自动打断`，`仪表线自动打断（缺口 / 半圆架桥）` → `仪表线自动打断`。模式（缺口 / 架桥 / S 型）本来就在命令里选，名字里再列一遍只会让人以为要分别点不同按钮；CUIx 按新标题重建（`MenuDefinition` 是唯一来源，菜单项与功能区按钮共用同一份标题）。`README` / `Help/index.html` / `Resources/ChemForge.cuix.txt` 同步。
+  同时补上 CUIx 重建判据的漏洞：`MenuFileNeedsRebuild` 原来只比菜单宏别名集合，改标题不改别名会被判成"不用重建"、界面永远显示旧名字；现在再把 `MenuMacro` 的 `<Name>` 文本（`HtmlDecode` 后）与 `MenuDefinition` 的命令项 `DisplayTitle` 集合比对，不一致即重建。
+
+### Tests
+- 端到端验收新增 `instbreak-scurve`（9 条断言）、`pipebreak-scurve`（7 条断言）、
+  `pipebreak-scurve-width`（7 条断言，S 符号宽度单独给 50）与 `pipebreak-scurve-memory`
+  （7 条断言，预置记忆 `LastSCurveWidth=50` 后回车沿用）四个场景：
+  每个断点 1 个 S 符号 / 1 条 5 拟合点样条、波长 ±W/2 横跨管线、振幅 ±W/8 沿管线、
+  中点落在断点上；默认符号宽度与缺口宽度一致，单独指定时缺口仍按原宽度切（50 → ±25 / ±6.25）。
+  记忆文件另由 runner 在每个场景前后断言：回车用默认值不写 `LastSCurveWidth`，
+  用户输入 50 写成 50，预置 50 后回车仍保持 50。
+  另外 `instbreak-bridge-memory` / `pipebreak-dir-memory` 两个场景验证模式与方向记忆：预置
+  `LastMode=H` / `LastMode=D + LastGapDirection=H` 后全程回车，几何与显式选择时完全一致，且记忆键保持不变。
+  `instbreak-bridge-side-memory` 预置 `LastBridgeSide=D` 后回车沿用凸起方向，断言半圆 bulge 为 `-1`（向下）。
+  12 个场景合计 89 条断言全部通过。
+- 另用 Core Console 按用户参考图复刻几何（竖管缺口 100 + 横管）实跑一次，把真实样条按
+  550×353 参考图比例叠上去，与参考白线逐像素比对：平均 1.8px、p90 3.0px、最大 3.5px。
 ## [1.2.1] - 2026-10-25
 
 ### Fixed

@@ -91,11 +91,27 @@ namespace ChemForge.Core.Pipe
 
         // ==================== 命令主体（由 Commands/Pipe/*Command 调用） ====================
 
+        /// <summary>缺口处理方式：只挖缺口 / 半圆拱桥 / S 型样条</summary>
+        private enum BreakMode
+        {
+            /// <summary>只挖缺口，不补任何图形</summary>
+            Gap,
+            /// <summary>缺口处补半圆拱桥（圆弧段）</summary>
+            Bridge,
+            /// <summary>缺口处补 S 型样条曲线（5 个拟合点）</summary>
+            SCurve
+        }
+
         /// <summary>一次打断请求的全部参数：交互段填好，处理段不再提问</summary>
         private sealed class BreakRequest
         {
             public double TotalWidth;
-            public bool BridgeMode;
+
+            /// <summary>S 型符号宽度（默认 = <see cref="TotalWidth"/>，可单独改；符号内部比例固定为 W/8）</summary>
+            public double SCurveWidth;
+
+            /// <summary>缺口处理方式</summary>
+            public BreakMode Mode;
             public Vector3d SideVector = new Vector3d(0, 1, 0);
 
             /// <summary>被打断（避让）侧所在图层；为 null 表示单图层模式</summary>
@@ -115,6 +131,28 @@ namespace ChemForge.Core.Pipe
 
             /// <summary>双图层模式：只做跨图层配对，避让侧恒为 <see cref="AvoidLayer"/></summary>
             public bool TwoLayer;
+        }
+
+        /// <summary>把模式关键字（D / H / S）转成枚举，未知值按「缺口」处理</summary>
+        private static BreakMode ParseMode(string keyword)
+        {
+            switch (keyword)
+            {
+                case "H": return BreakMode.Bridge;
+                case "S": return BreakMode.SCurve;
+                default: return BreakMode.Gap;
+            }
+        }
+
+        /// <summary>日志/提示用的模式中文名</summary>
+        private static string ModeLabel(BreakMode mode)
+        {
+            switch (mode)
+            {
+                case BreakMode.Bridge: return "架桥";
+                case BreakMode.SCurve: return "S型";
+                default: return "缺口";
+            }
         }
 
         /// <summary>图层点选结果</summary>
@@ -154,43 +192,40 @@ namespace ChemForge.Core.Pipe
             double totalWidth = pdr.Value;
             PipeBreakSettings.SetLastWidth(totalWidth);
 
-            // 3. 选择模式
-            var pko = new PromptKeywordOptions("\n选择模式 [缺口(D)/架桥(H)]: ");
+            // 3. 选择模式：缺口 / 半圆架桥 / S 型（记忆上次选择，回车沿用）
+            var pko = new PromptKeywordOptions("\n选择模式 [缺口(D)/架桥(H)/S型(S)]: ");
             pko.Keywords.Add("D");
             pko.Keywords.Add("H");
-            pko.Keywords.Default = "D";
+            pko.Keywords.Add("S");
+            pko.Keywords.Default = PipeBreakSettings.GetLastMode("D");
             PromptResult pkr = ed.GetKeywords(pko);
             if (pkr.Status != PromptStatus.OK) return;
-            bool bridgeMode = pkr.StringResult == "H";
+            BreakMode mode = ParseMode(pkr.StringResult);
+            PipeBreakSettings.SetLastMode(pkr.StringResult);
 
-            // 3.5 缺口方向（程序自动判断避让管线，无需逐点选择）
+            // 3.5 缺口方向（程序自动判断避让管线，无需逐点选择；记忆上次选择）
             var pkoDir = new PromptKeywordOptions("\n选择缺口方向 [垂直(V)/水平(H)]: ");
             pkoDir.Keywords.Add("V");
             pkoDir.Keywords.Add("H");
-            pkoDir.Keywords.Default = "V";
+            pkoDir.Keywords.Default = PipeBreakSettings.GetLastGapDirection("V");
             PromptResult pkrDir = ed.GetKeywords(pkoDir);
             if (pkrDir.Status != PromptStatus.OK) return;
             bool breakVertical = pkrDir.StringResult != "H";
+            PipeBreakSettings.SetLastGapDirection(breakVertical ? "V" : "H");
 
-            // 3.7 架桥模式：半圆凸起方向（四种半圆形式）
+            // 3.6 S 型符号宽度：默认与缺口/架桥宽度一致，可单独改（符号内部比例固定为 W/8）
+            double sWidth = mode == BreakMode.SCurve
+                ? PromptSCurveWidth(ed, totalWidth)
+                : totalWidth;
+            if (sWidth <= 0) return;
+
+            // 3.7 架桥：半圆凸起朝向（S 型不需要：S 左右对称，凸起朝向不改变形状）
             Vector3d sideVector = new Vector3d(0, 1, 0); // 默认上方 U
-            if (bridgeMode)
+            if (mode == BreakMode.Bridge)
             {
-                var pkoB = new PromptKeywordOptions("\n架桥半圆凸起方向 [上方(U)/下方(D)/左(L)/右(R)]: ");
-                pkoB.Keywords.Add("U");
-                pkoB.Keywords.Add("D");
-                pkoB.Keywords.Add("L");
-                pkoB.Keywords.Add("R");
-                pkoB.Keywords.Default = "U";
-                PromptResult pkrB = ed.GetKeywords(pkoB);
-                if (pkrB.Status != PromptStatus.OK) return;
-                switch (pkrB.StringResult)
-                {
-                    case "D": sideVector = new Vector3d(0, -1, 0); break;
-                    case "L": sideVector = new Vector3d(-1, 0, 0); break;
-                    case "R": sideVector = new Vector3d(1, 0, 0); break;
-                    default: sideVector = new Vector3d(0, 1, 0); break;
-                }
+                Vector3d? side = PromptBridgeSide(ed);
+                if (side == null) return;
+                sideVector = side.Value;
             }
 
             // 3.9 指定管线所在图层（记忆上次选择，与宽度记忆共用同一份插件配置文件）
@@ -221,7 +256,8 @@ namespace ChemForge.Core.Pipe
             RunCore(doc, sw, new BreakRequest
             {
                 TotalWidth = totalWidth,
-                BridgeMode = bridgeMode,
+                SCurveWidth = sWidth,
+                Mode = mode,
                 SideVector = sideVector,
                 BreakVertical = breakVertical,
                 AvoidLayer = pipeLayer,
@@ -267,34 +303,30 @@ namespace ChemForge.Core.Pipe
             double totalWidth = pdr.Value;
             PipeBreakSettings.SetLastWidth(totalWidth);
 
-            // 3. 选择模式
-            var pko = new PromptKeywordOptions("\n选择模式 [缺口(D)/架桥(H)]: ");
+            // 3. 选择模式：缺口 / 半圆架桥 / S 型（记忆上次选择，回车沿用）
+            var pko = new PromptKeywordOptions("\n选择模式 [缺口(D)/架桥(H)/S型(S)]: ");
             pko.Keywords.Add("D");
             pko.Keywords.Add("H");
-            pko.Keywords.Default = "D";
+            pko.Keywords.Add("S");
+            pko.Keywords.Default = PipeBreakSettings.GetLastMode("D");
             PromptResult pkr = ed.GetKeywords(pko);
             if (pkr.Status != PromptStatus.OK) return;
-            bool bridgeMode = pkr.StringResult == "H";
+            BreakMode mode = ParseMode(pkr.StringResult);
+            PipeBreakSettings.SetLastMode(pkr.StringResult);
 
-            // 4. 架桥模式：半圆凸起方向（四种半圆形式）
+            // 3.6 S 型符号宽度：默认与缺口/架桥宽度一致，可单独改（符号内部比例固定为 W/8）
+            double sWidth = mode == BreakMode.SCurve
+                ? PromptSCurveWidth(ed, totalWidth)
+                : totalWidth;
+            if (sWidth <= 0) return;
+
+            // 4. 架桥：半圆凸起朝向（S 型不需要：S 左右对称，凸起朝向不改变形状）
             Vector3d sideVector = new Vector3d(0, 1, 0); // 默认上方 U
-            if (bridgeMode)
+            if (mode == BreakMode.Bridge)
             {
-                var pkoB = new PromptKeywordOptions("\n架桥半圆凸起方向 [上方(U)/下方(D)/左(L)/右(R)]: ");
-                pkoB.Keywords.Add("U");
-                pkoB.Keywords.Add("D");
-                pkoB.Keywords.Add("L");
-                pkoB.Keywords.Add("R");
-                pkoB.Keywords.Default = "U";
-                PromptResult pkrB = ed.GetKeywords(pkoB);
-                if (pkrB.Status != PromptStatus.OK) return;
-                switch (pkrB.StringResult)
-                {
-                    case "D": sideVector = new Vector3d(0, -1, 0); break;
-                    case "L": sideVector = new Vector3d(-1, 0, 0); break;
-                    case "R": sideVector = new Vector3d(1, 0, 0); break;
-                    default: sideVector = new Vector3d(0, 1, 0); break;
-                }
+                Vector3d? side = PromptBridgeSide(ed);
+                if (side == null) return;
+                sideVector = side.Value;
             }
 
             // 5. 指定仪表线图层（被打断的一侧）
@@ -349,7 +381,8 @@ namespace ChemForge.Core.Pipe
             RunCore(doc, sw, new BreakRequest
             {
                 TotalWidth = totalWidth,
-                BridgeMode = bridgeMode,
+                SCurveWidth = sWidth,
+                Mode = mode,
                 SideVector = sideVector,
                 AvoidLayer = instrLayer,
                 OtherLayer = pipeLayer,
@@ -357,6 +390,73 @@ namespace ChemForge.Core.Pipe
                 CommandName = "INSTBREAK",
                 AvoidLabel = "仪表线"
             }, psr.Value.GetObjectIds());
+        }
+
+        /// <summary>
+        /// 询问架桥半圆凸起方向 U/D/L/R（记忆上次选择，回车沿用）；取消时返回 null。
+        /// </summary>
+        private static Vector3d? PromptBridgeSide(Editor ed)
+        {
+            var pko = new PromptKeywordOptions("\n架桥半圆凸起方向 [上方(U)/下方(D)/左(L)/右(R)]: ");
+            pko.Keywords.Add("U");
+            pko.Keywords.Add("D");
+            pko.Keywords.Add("L");
+            pko.Keywords.Add("R");
+            pko.Keywords.Default = PipeBreakSettings.GetLastBridgeSide("U");
+            PromptResult pkr = ed.GetKeywords(pko);
+            if (pkr.Status != PromptStatus.OK) return null;
+
+            PipeBreakSettings.SetLastBridgeSide(pkr.StringResult);
+            switch (pkr.StringResult)
+            {
+                case "D": return new Vector3d(0, -1, 0);
+                case "L": return new Vector3d(-1, 0, 0);
+                case "R": return new Vector3d(1, 0, 0);
+                default: return new Vector3d(0, 1, 0);
+            }
+        }
+
+        /// <summary>
+        /// 询问 S 型符号宽度：默认值优先用**用户上次手动输入过的值**（记忆在 PipeBreak.settings 的
+        /// <c>LastSCurveWidth</c>），没记过时默认等于缺口/架桥宽度；直接回车即接受默认值。
+        /// 只有用户真的输入了一个与缺口宽度不同的数才记忆；输回缺口宽度视为「恢复默认」，清掉记忆。
+        /// 输入非正值视为取消。
+        /// </summary>
+        private static double PromptSCurveWidth(Editor ed, double totalWidth)
+        {
+            double remembered = PipeBreakSettings.GetLastSCurveWidth(0.0);
+            bool hasMemory = remembered > 1e-9;
+            double defaultValue = hasMemory ? remembered : totalWidth;
+
+            string message = hasMemory
+                ? "\n请输入 S 型符号宽度(mm) <回车沿用上次 " + remembered.ToString("0.###") + ">: "
+                : "\n请输入 S 型符号宽度(mm) <回车与缺口宽度一致>: ";
+
+            var pdo = new PromptDoubleOptions(message);
+            pdo.DefaultValue = defaultValue;
+            pdo.AllowNone = true;
+            PromptDoubleResult pdr = ed.GetDouble(pdo);
+
+            // 回车 = 接受默认值，记忆保持原样
+            if (pdr.Status == PromptStatus.None) return defaultValue;
+            if (pdr.Status != PromptStatus.OK) return -1.0;
+            if (pdr.Value <= 0.0)
+            {
+                ed.WriteMessage("\nS 型符号宽度必须大于 0，已取消。");
+                return -1.0;
+            }
+
+            if (Math.Abs(pdr.Value - totalWidth) <= 1e-9)
+            {
+                // 跟缺口宽度一致 = 默认值，不需要记忆
+                if (hasMemory) PipeBreakSettings.ClearLastSCurveWidth();
+            }
+            else
+            {
+                PipeBreakSettings.SetLastSCurveWidth(pdr.Value);
+            }
+
+            return pdr.Value;
         }
 
         /// <summary>
@@ -401,7 +501,7 @@ namespace ChemForge.Core.Pipe
             // 提示文字里的「线」的统称：单图层模式沿用改造前的措辞（管线），双图层模式泛指两侧曲线
             string lineWord = twoLayer ? "曲线" : "管线";
             Logger.Info("命令 " + req.CommandName + " 进入处理段：宽度=" + req.TotalWidth +
-                        "，模式=" + (req.BridgeMode ? "架桥" : "缺口") +
+                        "，模式=" + ModeLabel(req.Mode) +
                         "，图层模式=" + (twoLayer ? "双图层（避让侧固定为 " + req.AvoidLabel + "）" : "单图层"));
 
             // 在事务内完成全部处理（可整体 Undo）
@@ -1200,14 +1300,23 @@ namespace ChemForge.Core.Pipe
 
             if (kept == 0) return 0; // 没有保留片段，异常，保持原样
 
-            // 4) 架桥：直接按合并后的缺口生成半圆，与缺口严格一致
-            if (req.BridgeMode)
+            // 4) 补图形：架桥补半圆、S 型补样条，都严格贴合合并后的缺口
+            if (req.Mode == BreakMode.Bridge)
             {
                 foreach (Interval iv in merged)
                 {
                     Point3d a = curve.GetPointAtParameter(iv.Start);
                     Point3d b = curve.GetPointAtParameter(iv.End);
                     CreateBridgePolyline(a, b, req.SideVector, pipe, props, modelSpace, tr);
+                }
+            }
+            else if (req.Mode == BreakMode.SCurve)
+            {
+                foreach (Interval iv in merged)
+                {
+                    Point3d a = curve.GetPointAtParameter(iv.Start);
+                    Point3d b = curve.GetPointAtParameter(iv.End);
+                    CreateSCurveSpline(a, b, req.SCurveWidth, pipe, props, modelSpace, tr);
                 }
             }
 
@@ -1360,6 +1469,69 @@ namespace ChemForge.Core.Pipe
             catch
             {
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// 生成 S 型「断线符号」：在缺口两端各画一个 S，S 的波长方向横跨管线（垂直于管线），
+        /// 跨度 = <paramref name="sWidth"/>（默认与缺口宽度一致，可单独指定），振幅沿管线方向
+        /// ±<paramref name="sWidth"/>/8 —— 只要宽度定了，内部比例（跨度:振幅 = 8:1）就固定。
+        /// 每个 S 是**一条 5 个拟合点的样条**（P0-P1-P2-P3-P4），P2 正好落在断点上、与原管线端点相接。
+        /// 与参考图逐像素一致：AutoCAD 自然样条（弦长参数化、3 次），与手工 SPLINE 命令同构。
+        /// </summary>
+        private static int CreateSCurveSpline(Point3d A, Point3d B, double sWidth,
+                                              PipeInfo source, EntityProps props,
+                                              BlockTableRecord modelSpace, Transaction tr)
+        {
+            try
+            {
+                double z = A.Z;
+                if (source.Curve is Polyline srcPline) z = srcPline.Elevation;
+
+                Point3d end1 = new Point3d(A.X, A.Y, z);
+                Point3d end2 = new Point3d(B.X, B.Y, z);
+                Vector3d chord = end2 - end1;
+                double gapLength = chord.Length;
+                if (gapLength < Tolerance.Global.EqualPoint) return 0;
+
+                // u = 沿管线方向（从缺口一端指向另一端）；across = 横跨管线的方向
+                Vector3d u = chord / gapLength;
+                Vector3d across = Vector3d.ZAxis.CrossProduct(u);
+                if (across.Length < 1e-9) return 0;
+                across = across.GetNormal();
+
+                // S 的振幅方向 = 沿管线方向（负号决定相位：参考图里 S 的左侧拱起、右侧下凹）
+                Vector3d rise = u * -1.0;
+
+                // 符号尺寸只看 sWidth（缺口本身仍按 TotalWidth 切），内部比例固定 8:1
+                double width = sWidth > Tolerance.Global.EqualPoint ? sWidth : gapLength;
+                double half = width * 0.5;
+                double quarter = half * 0.5;
+                double amplitude = width / 8.0;
+
+                int created = 0;
+                foreach (Point3d p in new[] { end1, end2 })
+                {
+                    Point3d p0 = p - across * half;
+                    Point3d p1 = p - across * quarter + rise * amplitude;
+                    Point3d p2 = p;
+                    Point3d p3 = p + across * quarter - rise * amplitude;
+                    Point3d p4 = p + across * half;
+
+                    var fitPoints = new Point3dCollection { p0, p1, p2, p3, p4 };
+                    var spline = new Spline(fitPoints, KnotParameterizationEnum.Chord, 3, 0.0);
+
+                    // 先驻留数据库再设置属性（未驻留实体设置属性会抛 eNoDatabase）
+                    modelSpace.AppendEntity(spline);
+                    tr.AddNewlyCreatedDBObject(spline, true);
+                    ApplyProps(spline, props);
+                    created++;
+                }
+                return created;
+            }
+            catch
+            {
+                return 0;
             }
         }
     }

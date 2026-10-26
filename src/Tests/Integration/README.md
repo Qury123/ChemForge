@@ -1,4 +1,4 @@
-# 端到端验收（AutoCAD Core Console）
+﻿# 端到端验收（AutoCAD Core Console）
 
 `PIPEBREAK` / `INSTBREAK` 的**几何结果**自动化验收。单元测试（`src\Tests`，MSTest）只覆盖菜单、
 命令名这类纯逻辑；打断引擎重度依赖 AutoCAD API，只能放到**真实 AutoCAD 内核**里验，这个目录就是干这个的。
@@ -36,6 +36,13 @@ Windows PowerShell 5.1（**不需要** PowerShell 7）。
 | --- | --- | --- |
 | `instbreak-gap` | `INSTBREAK`，宽度 200 / 缺口 | 8 条：L1 被 P1、P2 打断成 `[0,400][600,700][900,1000]`；**同层**交叉（L2×L1、P3×P2）不断；未选图层（OTHER）不断；管线保持 3 条完整 |
 | `instbreak-bridge` | `INSTBREAK`，宽度 200 / 架桥 / 凸起 U | 8 条：同上，但缺口处生成 2 个 `LWPOLYLINE`（2 顶点、|bulge| = 1 的半圆），跨度正好 `[400,600]`、`[700,900]`，图层 `INST` |
+| `instbreak-scurve` | `INSTBREAK`，宽度 200 / **S 型** / 符号宽度默认 | 9 条：缺口区间同 `instbreak-gap`；**每个断点一个 S 符号 = 一条 5 拟合点 `SPLINE`**（共 4 条）；符号波长横跨管线（±100）、振幅沿管线（±25 = W/8）：`(400,-100)(375,-50)(400,0)(425,50)(400,100)`，其余三个断点 `x=600/700/900` 同构；不生成任何 `LWPOLYLINE` |
+| `pipebreak-scurve` | `PIPEBREAK`，宽度 100 / **S 型** / 符号宽度默认 / **垂直** | 7 条：缺口落在竖线 P2 上（断成 `[-200,-150][-50,200]`），两个断点各一个 S 符号、每个一条 5 拟合点 `SPLINE`（共 2 条）：`(850,-150)(825,-162.5)(800,-150)(775,-137.5)(750,-150)`，另一断点 `(800,-50)` 同构；P3 横线不被打断、也不生成样条 |
+| `pipebreak-scurve-width` | `PIPEBREAK`，宽度 100 / **S 型** / **符号宽度 50** / 垂直 | 7 条：缺口仍按 100 切（`[-200,-150][-50,200]`），但符号按 50 走、内部比例不变：跨度 ±25、振幅 ±6.25 → `(825,-150)(812.5,-156.25)(800,-150)(787.5,-143.75)(775,-150)`，`(800,-50)` 同构；另断言不存在按 100 生成的大符号 |
+| `pipebreak-scurve-memory` | `PIPEBREAK`，宽度 100 / **S 型** / **回车（预置记忆 50）** / 垂直 | 7 条：预置 `LastSCurveWidth=50` 后直接回车，符号按 50 生成（几何同 `pipebreak-scurve-width`），记忆保持 50 |
+| `instbreak-bridge-memory` | `INSTBREAK`，宽度 200 / **回车（预置记忆 H）** / 凸起 `U` | 8 条：预置 `LastMode=H` 后直接回车，走架桥路径（几何同 `instbreak-bridge`），记忆保持 `H` |
+| `instbreak-bridge-side-memory` | `INSTBREAK`，宽度 200 / **回车（记忆 H）** / **回车（记忆 D）** | 6 条：预置 `LastBridgeSide=D` 后回车沿用凸起方向，半圆 bulge 为 `-1`（向下），跨度与 `instbreak-bridge` 一致；记忆键保持 `D` |
+| `pipebreak-dir-memory` | `PIPEBREAK`，宽度 100 / **回车（记忆 D）** / **回车（记忆 H）** | 5 条：预置 `LastMode=D` + `LastGapDirection=H`，两句都回车 → 几何同 `pipebreak-regression-h`，两个记忆键保持原值 |
 | `pipebreak-regression` | `PIPEBREAK`，宽度 100 / 缺口 / **垂直** | 6 条：单图层模式被打断的是竖线 → P2 断成 `[-200,-150][-50,200]`，P1 / P3 / INST / OTHER 全不动 |
 | `pipebreak-regression-h` | `PIPEBREAK`，宽度 100 / 缺口 / **水平** | 5 条：被打断的是横线 → P3 断成 `[600,750][850,900]`，两根竖管全不动 |
 | `pipebreak-tjunction` | `PIPEBREAK`，宽度 100 / 缺口 / **垂直**（夹具换 `FixtureT.lsp`） | 5 条：支管端点过冲主管中心线 **0.4**（T 型端接）→ 主管 `x=500` **整根保留、一个缺口都不许有**；同图 `x=1500` 处的**真交叉**仍按宽度 100 断成 `[-200,-50][50,200]`（防止新规则把打断整个关掉）；两条支管不动 |

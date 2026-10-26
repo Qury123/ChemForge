@@ -24,7 +24,7 @@ namespace ChemForge.Application
         public string Macro { get; }
 
         /// <summary>
-        /// 功能区/上下文使用的纯显示名：去掉 "\t" 后的命令名提示段。
+        /// 功能区/上下文使用的纯显示名：去掉 "" 后的命令名提示段。
         /// 下拉菜单的 Title 用「功能描述\t命令名」（\t 后命令名右对齐，Express 风格）；
         /// 但功能区按钮不适合显示 \t 段，故用本属性取主显示文本。
         /// </summary>
@@ -147,60 +147,61 @@ namespace ChemForge.Application
         public const string MenuGroupName = "CHEMFORGE";
 
         /// <summary>
-        /// 二级子菜单集合（Express 风格菜单，宽幅留白布局）
+        /// 二级子菜单集合
         ///
         /// 设计说明：
-        /// 1) 一级分组名、二级命令名均为原始中文名称（不附加任何英文提示）；
-        /// 2) 宽度处理：AutoCAD 菜单项文本支持 \t 制表符（右侧右对齐列）。
-        ///    这里在 \t 之后填充「全角空格」——右侧只留白、不显示任何文字，
-        ///    菜单宽度由左侧标题 + 右侧留白共同决定，整体宽幅、疏朗；
+        /// 1) 一级分组名、二级命令名均为原始中文名称（不附加任何英文提示，也不带括号说明）；
+        /// 2) 宽度交给 AutoCAD：标题里不加 \t 留白，下拉菜单按最长的那一行自动撑开
+        ///    （2026-10-26 用户要求：原来用 \t + 全角空格把菜单撑宽，标签短时右侧留大片空白，
+        ///    同时括号里的模式说明也被认为多余，一并去掉）；
         /// 3) 菜单宏使用「原始命令名」（管线打断用 PIPEBREAK），
         ///    与命令注册名统一，命令行为显示真实命令名；宏的尾随空格 = 回车确认，
         ///    点击后命令自动执行（^C^C 前缀在 2025 环境下不可靠，已弃用）。
         /// </summary>
         public static readonly IReadOnlyList<MenuItemDefinition> Menus = new List<MenuItemDefinition>
         {
-            new MenuItemDefinition("文字格式处理\t　　　　　　", "ID_TextMenu")
+            new MenuItemDefinition("文字格式处理", "ID_TextMenu")
             {
                 Children =
                 {
-                    new MenuItemDefinition("批量修改多行文字颜色\t　　　　　　　　", "ID_TextColor", CommandNames.TextColor + " ")
+                    new MenuItemDefinition("批量修改多行文字颜色", "ID_TextColor", CommandNames.TextColor + " ")
                 }
             },
-            new MenuItemDefinition("图块批量处理\t　　　　　　", "ID_BlockMenu")
+            new MenuItemDefinition("图块批量处理", "ID_BlockMenu")
             {
                 Children =
                 {
-                    new MenuItemDefinition("批量修改块属性（内容 / 文字选项 / 特性）\t　　　　　　　　", "ID_BatchAttrChange", CommandNames.BatchAttrChange + " ")
+                    new MenuItemDefinition("批量修改块属性", "ID_BatchAttrChange", CommandNames.BatchAttrChange + " ")
                 }
             },
-            new MenuItemDefinition("图块编号\t　　　　　　", "ID_BlockNumberMenu")
+            new MenuItemDefinition("图块编号", "ID_BlockNumberMenu")
             {
                 Children =
                 {
-                    new MenuItemDefinition("属性块批量编号（先弹窗，再两步选块）\t　　　　　　　　", "ID_BlockNumber", CommandNames.BlockNumber + " ")
+                    new MenuItemDefinition("属性块批量编号", "ID_BlockNumber", CommandNames.BlockNumber + " ")
                 }
             },
-            new MenuItemDefinition("管线与仪表\t　　　　　　", "ID_ToolsMenu")
+            new MenuItemDefinition("管线与仪表", "ID_ToolsMenu")
             {
                 Children =
                 {
-                    new MenuItemDefinition("管线自动打断（缺口 / 半圆架桥）\t　　　　　　　　", "ID_BreakPipe", CommandNames.PipeBreak + " "),
+                    // 名称不再体现"缺口/半圆架桥"：模式（含 S 型）在命令里选，菜单名只标功能
+                    new MenuItemDefinition("管线自动打断", "ID_BreakPipe", CommandNames.PipeBreak + " "),
                     // 仪表线自动打断（INSTBREAK）：与上一项同引擎，差别是图层要点选两次
                     // （仪表线图层 + 管线图层）、不询问缺口方向（固定打断仪表线）。
-                    new MenuItemDefinition("仪表线自动打断（缺口 / 半圆架桥）\t　　　　　　　　", "ID_BreakInstrument", CommandNames.InstrumentBreak + " "),
+                    new MenuItemDefinition("仪表线自动打断", "ID_BreakInstrument", CommandNames.InstrumentBreak + " "),
                     // 仪表块自动编号（TAGNO）2026-10-14 从菜单与功能区摘掉：命令本身仍在
                     // （PackageContents.xml 里登记，命令行可直接敲），但业务尚未实现 ——
                     // NumberInstCommand 里仍是 TODO，只打印编号、不读不写图纸，
                     // 挂在界面上会让人以为点了就能用。
                 }
             },
-            new MenuItemDefinition("关于 ChemForge\t　　　　　　", "ID_AboutMenu")
+            new MenuItemDefinition("关于 ChemForge", "ID_AboutMenu")
             {
                 Children =
                 {
                     MenuItemDefinition.Separator("ID_AboutSep"),
-                    new MenuItemDefinition("关于 ChemForge（版本信息）\t　　　　　　　　", "ID_About", CommandNames.ChemForge + " ")
+                    new MenuItemDefinition("关于 ChemForge", "ID_About", CommandNames.ChemForge + " ")
                 }
             }
         };

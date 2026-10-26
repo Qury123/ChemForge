@@ -24,6 +24,10 @@ namespace ChemForge.Core.Pipe
     {
         private const string FileName = "PipeBreak.settings";
         private const string WidthKey = "LastWidth";
+        private const string SCurveWidthKey = "LastSCurveWidth";
+        private const string ModeKey = "LastMode";
+        private const string GapDirectionKey = "LastGapDirection";
+        private const string BridgeSideKey = "LastBridgeSide";
         private const string LayerKey = "LastPipeLayer";
         private const string InstrumentLayerKey = "LastInstrumentLayer";
 
@@ -49,6 +53,102 @@ namespace ChemForge.Core.Pipe
         public static void SetLastWidth(double value)
         {
             Save(WidthKey, value.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>
+        /// 读取用户上次**手动输入**的 S 型符号宽度；没存过（一直用默认值）时返回 <paramref name="fallback"/>。
+        /// 只记用户自己给的数，跟缺口宽度相同的默认值不入库，所以这里读不到就说明用户从没改过。
+        /// </summary>
+        public static double GetLastSCurveWidth(double fallback)
+        {
+            string raw;
+            if (!Load().TryGetValue(SCurveWidthKey, out raw))
+            {
+                return fallback;
+            }
+
+            double value;
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            {
+                return fallback;
+            }
+
+            return value > 1e-9 ? value : fallback;
+        }
+
+        public static void SetLastSCurveWidth(double value)
+        {
+            Save(SCurveWidthKey, value.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>清掉记忆的 S 型符号宽度（用户改回「跟缺口宽度一致」时调用）。</summary>
+        public static void ClearLastSCurveWidth()
+        {
+            Save(SCurveWidthKey, string.Empty, removeKey: true);
+        }
+
+        /// <summary>
+        /// 读取上次选过的打断模式关键字（D = 缺口 / H = 架桥 / S = S 型）；
+        /// 没存过或存了不认识的值时返回 <paramref name="fallback"/>。
+        /// </summary>
+        public static string GetLastMode(string fallback)
+        {
+            return ReadKeyword(ModeKey, fallback, "D", "H", "S");
+        }
+
+        public static void SetLastMode(string value)
+        {
+            string normalized = NormalizeKeyword(value, "D", "H", "S");
+            if (normalized != null) Save(ModeKey, normalized);
+        }
+
+        /// <summary>读取上次选过的缺口方向关键字（V = 垂直 / H = 水平）；没存过时返回 <paramref name="fallback"/>。</summary>
+        public static string GetLastGapDirection(string fallback)
+        {
+            return ReadKeyword(GapDirectionKey, fallback, "V", "H");
+        }
+
+        public static void SetLastGapDirection(string value)
+        {
+            string normalized = NormalizeKeyword(value, "V", "H");
+            if (normalized != null) Save(GapDirectionKey, normalized);
+        }
+
+        /// <summary>读取上次选过的架桥半圆凸起方向（U / D / L / R）；没存过时返回 <paramref name="fallback"/>。</summary>
+        public static string GetLastBridgeSide(string fallback)
+        {
+            return ReadKeyword(BridgeSideKey, fallback, "U", "D", "L", "R");
+        }
+
+        public static void SetLastBridgeSide(string value)
+        {
+            string normalized = NormalizeKeyword(value, "U", "D", "L", "R");
+            if (normalized != null) Save(BridgeSideKey, normalized);
+        }
+
+        /// <summary>读一个只允许若干大写关键字的值；不合法一律退回默认值。</summary>
+        private static string ReadKeyword(string key, string fallback, params string[] allowed)
+        {
+            string raw;
+            if (!Load().TryGetValue(key, out raw))
+            {
+                return fallback;
+            }
+
+            string value = NormalizeKeyword(raw, allowed);
+            return value == null ? fallback : value;
+        }
+
+        /// <summary>把用户选项规整成大写关键字；不认识时返回 null。</summary>
+        private static string NormalizeKeyword(string value, params string[] allowed)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            string upper = value.Trim().ToUpperInvariant();
+            return Array.IndexOf(allowed, upper) >= 0 ? upper : null;
         }
 
         /// <summary>读取上次的管线图层名；没存过时返回 null（调用方据此改为提示用户点选）。</summary>
@@ -140,10 +240,23 @@ namespace ChemForge.Core.Pipe
         /// <summary>写入一项并保留文件里其它项（两个设置共用一个文件）。</summary>
         private static void Save(string key, string value)
         {
+            Save(key, value, removeKey: false);
+        }
+
+        /// <summary>写入（或删除）一项并保留文件里其它项。</summary>
+        private static void Save(string key, string value, bool removeKey)
+        {
             try
             {
                 var map = Load();
-                map[key] = value;
+                if (removeKey)
+                {
+                    map.Remove(key);
+                }
+                else
+                {
+                    map[key] = value;
+                }
 
                 string path = ConfigManager.GetConfigFilePath(FileName);
                 string directory = Path.GetDirectoryName(path);

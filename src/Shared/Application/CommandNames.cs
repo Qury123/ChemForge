@@ -1,4 +1,4 @@
-namespace ChemForge.Application
+﻿namespace ChemForge.Application
 {
     /// <summary>
     /// AutoCAD 命令名的**唯一来源**。
@@ -27,10 +27,10 @@ namespace ChemForge.Application
         /// <summary>属性块批量编号：插件自检（版本 / 路径 / SECURELOAD / TRUSTEDPATHS / 已注册命令）</summary>
         public const string BlockNumberInfo = "BLKNUMINFO";
 
-        /// <summary>管线自动打断（缺口 / 半圆架桥）</summary>
+        /// <summary>管线自动打断（缺口 / 架桥 / S 型）</summary>
         public const string PipeBreak = "PIPEBREAK";
 
-        /// <summary>仪表线自动打断（仪表线 × 管线，固定打断仪表线）</summary>
+        /// <summary>仪表线自动打断（仪表线 × 管线，固定打断仪表线；缺口 / 架桥 / S 型）</summary>
         public const string InstrumentBreak = "INSTBREAK";
 
         /// <summary>仪表块自动编号</summary>
