@@ -64,6 +64,10 @@ namespace ChemForge.Commands.Common
             catch (System.Exception ex)
             {
                 Logger.Error("CHEMFORGE 执行失败。", ex);
+
+                // 只写日志等于"敲了没反应"：日志落在 %LOCALAPPDATA%，用户看不到。
+                // 与 TCOLOR / BLKATTCHANGE / BLKNUM 一致，把失败原因打到命令行。
+                CommandHost.ReportFailure(CommandNames.ChemForge, ex);
             }
         }
 

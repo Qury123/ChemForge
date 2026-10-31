@@ -1,6 +1,7 @@
 using System;
 using Autodesk.AutoCAD.Runtime;
 using ChemForge.Application;
+using ChemForge.Commands.Common;
 using ChemForge.Utilities;
 
 namespace ChemForge.Commands.Instrument
@@ -45,6 +46,10 @@ namespace ChemForge.Commands.Instrument
             catch (System.Exception ex)
             {
                 Logger.Error("TAGNO 执行失败。", ex);
+
+                // 只写日志等于"敲了没反应"：日志落在 %LOCALAPPDATA%，用户看不到。
+                // 与 TCOLOR / BLKATTCHANGE / BLKNUM 一致，把失败原因打到命令行。
+                CommandHost.ReportFailure(CommandNames.NumberInst, ex);
             }
         }
 

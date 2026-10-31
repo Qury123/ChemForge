@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="AutoCAD 2017–2026" src="https://img.shields.io/badge/AutoCAD-2017--2026-blue?style=flat-square">
+  <img alt="支持 AutoCAD 2017–2026" src="https://img.shields.io/badge/AutoCAD-2017--2026-blue?style=flat-square">
   <img alt="Windows 64 位" src="https://img.shields.io/badge/Windows-64--bit-lightgrey?style=flat-square">
   <img alt="最新版本" src="https://img.shields.io/github/v/release/Qury123/ChemForge?style=flat-square&label=version&color=orange">
   <img alt="许可 MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square">
@@ -18,7 +18,7 @@
 
 | 项目 | 要求 |
 |------|------|
-| AutoCAD | **2017 – 2026**（安装时自动识别本机装了哪些版本，由你勾选） |
+| AutoCAD | **2017 – 2026**：支持（安装时自动识别本机装了哪些版本，由你勾选） |
 | 系统 | Windows 10 / 11，64 位 |
 | 权限 | 安装时点一次 UAC 授权（和装 QQ、微信一样，弹窗里选「是」） |
 
